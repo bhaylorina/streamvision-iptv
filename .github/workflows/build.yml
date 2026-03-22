@@ -5,7 +5,6 @@ on:
     branches: [ "master", "main" ]
   workflow_dispatch:
 
-# 🔴 Yeh permission zaroori hai taaki GitHub direct file upload kar sake
 permissions:
   contents: write
 
@@ -22,7 +21,10 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    # 🛠️ THE SURGERY: AI ka kharab wrapper hata kar fresh setup kar rahe hain
+    - name: Fix AI's Broken Wrapper
+      run: gradle wrapper
 
     - name: Give Permission to Gradle
       run: chmod +x gradlew
@@ -30,7 +32,7 @@ jobs:
     - name: Build Debug APK 🚀
       run: ./gradlew assembleDebug
 
-    - name: Rename APK File (Saaf naam ke liye)
+    - name: Rename APK File
       run: mv app/build/outputs/apk/debug/app-debug.apk StreamVision-App.apk
 
     - name: Upload Direct APK 🎁
