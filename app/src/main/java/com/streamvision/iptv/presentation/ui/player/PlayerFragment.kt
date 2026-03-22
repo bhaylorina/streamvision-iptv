@@ -2,7 +2,6 @@ package com.streamvision.iptv.presentation.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -22,10 +21,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
@@ -34,7 +30,6 @@ import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 @UnstableApi
 @AndroidEntryPoint
@@ -69,7 +64,6 @@ class PlayerFragment : Fragment() {
         setupClickListeners()
         observeState()
         
-        // Load channel
         viewModel.loadChannel(args.channelId)
     }
 
@@ -130,7 +124,6 @@ class PlayerFragment : Fragment() {
             }
         }
         
-        // Handle back press
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner,
             object : OnBackPressedCallback(true) {
@@ -147,7 +140,6 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     state.currentChannel?.let { channel ->
-                        // Only play if not already playing this URL
                         if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
                             playChannel(channel)
                         }
@@ -163,41 +155,21 @@ class PlayerFragment : Fragment() {
     }
 
     private fun playChannel(channel: Channel) {
-        Log.d(TAG, "Playing channel: ${channel.name}")
+        Log.d(TAG, "Playing: ${channel.name}")
         Log.d(TAG, "URL: ${channel.url}")
         Log.d(TAG, "DRM Key: ${channel.drmKey}")
-        Log.d(TAG, "DRM License URL: ${channel.drmLicenseUrl}")
+        Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "Referer: ${channel.referer}")
         
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        val mediaItem = buildMediaItem(channel)
+        val mediaItem = MediaItem.fromUri(channel.url)
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
-    }
-
-    private fun buildMediaItem(channel: Channel): MediaItem {
-        // Check if DRM is needed
-        val hasDrmKey = !channel.drmKey.isNullOrBlank()
-        
-        Log.d(TAG, "=== Building media item ===")
-        Log.d(TAG, "Channel: ${channel.name}")
-        Log.d(TAG, "URL: ${channel.url}")
-        Log.d(TAG, "DRM Key: ${channel.drmKey}")
-        Log.d(TAG, "DRM License URL: ${channel.drmLicenseUrl}")
-        
-        // DEBUG: For now, try playing WITHOUT DRM first to see if stream works
-        Log.d(TAG, ">>> Trying WITHOUT DRM first (debug mode) <<<")
-        
-        // Try without DRM - to diagnose if the issue is DRM or stream itself
-        return MediaItem.fromUri(channel.url)
-    }
-    
-    private fun hexStringToByteArray(hex: String): ByteArray {
-        return ByteArray(0)
     }
 
     private fun showError(message: String) {
@@ -212,9 +184,7 @@ class PlayerFragment : Fragment() {
         val window = activity?.window ?: return
         WindowCompat.setDecorFitsSystemWindows(window, true)
         
-        player?.let { exoPlayer ->
-            exoPlayer.release()
-        }
+        player?.release()
         player = null
     }
 

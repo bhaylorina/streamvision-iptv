@@ -155,7 +155,10 @@ object M3UParser {
                     group = if (currentGroup.isNullOrEmpty()) "Others" else currentGroup,
                     playlistId = playlistId,
                     drmLicenseUrl = currentLicenseKey,
-                    drmKey = if (currentKey != null) "$currentKeyId:$currentKey" else null
+                    drmKey = if (currentKey != null) "$currentKeyId:$currentKey" else null,
+                    userAgent = currentUa,
+                    cookie = currentCookie,
+                    referer = currentReferer
                 )
                 channels.add(channel)
                 

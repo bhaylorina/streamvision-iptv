@@ -10,5 +10,8 @@ data class Channel(
     val isFavorite: Boolean = false,
     val lastWatched: Long? = null,
     val drmLicenseUrl: String? = null,
-    val drmKey: String? = null
+    val drmKey: String? = null,
+    val userAgent: String? = null,
+    val cookie: String? = null,
+    val referer: String? = null
 )
