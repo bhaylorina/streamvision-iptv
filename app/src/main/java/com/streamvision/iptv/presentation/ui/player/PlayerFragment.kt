@@ -226,16 +226,26 @@ class PlayerFragment : Fragment() {
     }
     
     private fun buildMediaItem(channel: Channel): MediaItem {
-        var url = channel.url
+        Log.d(TAG, ">>> Building MediaItem <<<")
+        Log.d(TAG, "URL: ${channel.url}")
+        Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "DRM Key: ${channel.drmKey}")
         
-        // Add cookie as URL parameter (works for most servers)
+        // Build URL with cookie
+        var url = channel.url
         if (!channel.cookie.isNullOrBlank()) {
             val separator = if (url.contains("?")) "&" else "?"
             url = "$url${separator}Cookie=${channel.cookie}"
-            Log.d(TAG, "Added Cookie to URL: ${channel.cookie.take(30)}...")
+            Log.d(TAG, "Added Cookie to URL")
         }
         
         Log.d(TAG, "Final URL: ${url.take(80)}...")
+        
+        // TODO: Add ClearKey DRM support - need to fix Media3 API
+        if (!channel.drmKey.isNullOrBlank()) {
+            Log.w(TAG, "DRM key detected but not implemented yet: ${channel.drmKey}")
+        }
+        
         return MediaItem.fromUri(url)
     }
     
