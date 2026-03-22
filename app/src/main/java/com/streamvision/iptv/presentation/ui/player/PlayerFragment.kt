@@ -24,9 +24,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.DrmSessionManager
-import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.navigation.fragment.findNavController
@@ -185,83 +182,22 @@ class PlayerFragment : Fragment() {
     private fun buildMediaItem(channel: Channel): MediaItem {
         // Check if DRM is needed
         val hasDrmKey = !channel.drmKey.isNullOrBlank()
-        val hasLicenseUrl = !channel.drmLicenseUrl.isNullOrBlank()
         
-        Log.d(TAG, "Building media item - hasDrmKey: $hasDrmKey, hasLicenseUrl: $hasLicenseUrl")
+        Log.d(TAG, "=== Building media item ===")
+        Log.d(TAG, "Channel: ${channel.name}")
+        Log.d(TAG, "URL: ${channel.url}")
+        Log.d(TAG, "DRM Key: ${channel.drmKey}")
+        Log.d(TAG, "DRM License URL: ${channel.drmLicenseUrl}")
         
-        // Build HTTP data source factory with headers if needed
-        // For now, we'll use default - but headers would be added here
+        // DEBUG: For now, try playing WITHOUT DRM first to see if stream works
+        Log.d(TAG, ">>> Trying WITHOUT DRM first (debug mode) <<<")
         
-        // If we have a DRM key, try DRM
-        if (hasDrmKey) {
-            try {
-                val drmKey = channel.drmKey!!
-                val parts = drmKey.split(":")
-                
-                if (parts.size >= 2) {
-                    val kidHex = parts[0].trim()
-                    val keyHex = parts[1].trim()
-                    
-                    Log.d(TAG, "KID (hex): $kidHex")
-                    Log.d(TAG, "KEY (hex): $keyHex")
-                    
-                    // Convert hex to bytes then base64 for ClearKey
-                    val kidBytes = hexStringToByteArray(kidHex)
-                    val keyBytes = hexStringToByteArray(keyHex)
-                    val kidBase64 = android.util.Base64.encodeToString(kidBytes, android.util.Base64.NO_WRAP)
-                    val keyBase64 = android.util.Base64.encodeToString(keyBytes, android.util.Base64.NO_WRAP)
-                    
-                    Log.d(TAG, "KID (base64): $kidBase64")
-                    Log.d(TAG, "KEY (base64): $keyBase64")
-                    
-                    // Build ClearKey JSON - proper format
-                    val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$kidBase64"}],"type":"temporary"}"""
-                    
-                    Log.d(TAG, "ClearKey JSON: $clearKeyJson")
-                    
-                    // ClearKey UUID
-                    val clearKeyUuid = UUID.fromString("e2719d58-e985-11e3-ac10-0800200c9a66")
-                    
-                    // Build DRM configuration - use offline keys for ClearKey
-                    val drmBuilder = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
-                    
-                    // For Jio/ClearKey streams, we need offline key
-                    // The key format in playlist is already the actual key
-                    // Use setLicenseUri for key server if available
-                    if (hasLicenseUrl) {
-                        Log.d(TAG, "Using license URL: ${channel.drmLicenseUrl}")
-                        drmBuilder.setLicenseUri(channel.drmLicenseUrl)
-                    }
-                    
-                    val drmConfiguration = drmBuilder.build()
-                    
-                    val mediaItemBuilder = MediaItem.Builder()
-                        .setUri(channel.url)
-                        .setDrmConfiguration(drmConfiguration)
-                    
-                    Log.d(TAG, "MediaItem built with ClearKey DRM")
-                    
-                    return mediaItemBuilder.build()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error building DRM media item", e)
-            }
-        }
-        
-        // Try without DRM (for non-DRM streams or as fallback)
-        Log.d(TAG, "Using regular media item without DRM")
+        // Try without DRM - to diagnose if the issue is DRM or stream itself
         return MediaItem.fromUri(channel.url)
     }
     
     private fun hexStringToByteArray(hex: String): ByteArray {
-        val len = hex.length
-        val data = ByteArray(len / 2)
-        var i = 0
-        while (i < len) {
-            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
-            i += 2
-        }
-        return data
+        return ByteArray(0)
     }
 
     private fun showError(message: String) {
