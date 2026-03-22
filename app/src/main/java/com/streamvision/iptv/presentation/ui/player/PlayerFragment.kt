@@ -181,11 +181,11 @@ class PlayerFragment : Fragment() {
                     val keyId = parts[0]
                     val key = parts[1]
                     
-                    // Convert hex to base64url
+                    // Convert hex to standard base64
                     val keyIdBytes = hexToBytes(keyId)
                     val keyBytes = hexToBytes(key)
-                    val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
-                    val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+                    val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
+                    val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
                     
                     val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
                     Log.d(TAG, "ClearKey JSON: $clearKeyJson")
@@ -303,11 +303,11 @@ class PlayerFragment : Fragment() {
             Log.d(TAG, "KeyId: $keyId")
             Log.d(TAG, "Key: $key")
             
-            // Convert hex to base64 (URL-safe, no padding)
+            // Convert hex to standard base64 (NO_WRAP, no padding)
             val keyIdBytes = hexToBytes(keyId)
             val keyBytes = hexToBytes(key)
-            val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
-            val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+            val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
+            val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
             
             // Build ClearKey JSON (EME format)
             val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
