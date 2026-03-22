@@ -8,5 +8,7 @@ data class Channel(
     val group: String? = null,
     val playlistId: Long = 0,
     val isFavorite: Boolean = false,
-    val lastWatched: Long? = null
+    val lastWatched: Long? = null,
+    val drmLicenseUrl: String? = null,
+    val drmKey: String? = null
 )

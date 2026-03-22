@@ -20,15 +20,24 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.DrmSessionManager
+import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
+import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
+@UnstableApi
 @AndroidEntryPoint
 class PlayerFragment : Fragment() {
 
@@ -112,7 +121,7 @@ class PlayerFragment : Fragment() {
     private fun setupClickListeners() {
         binding.btnRetry.setOnClickListener {
             viewModel.uiState.value.currentChannel?.let { channel ->
-                playChannel(channel.url)
+                playChannel(channel)
             }
         }
         
@@ -135,7 +144,7 @@ class PlayerFragment : Fragment() {
                     state.currentChannel?.let { channel ->
                         // Only play if not already playing this URL
                         if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
-                            playChannel(channel.url)
+                            playChannel(channel)
                         }
                         binding.tvChannelName.text = channel.name
                     }
@@ -148,15 +157,36 @@ class PlayerFragment : Fragment() {
         }
     }
 
-    private fun playChannel(url: String) {
+    private fun playChannel(channel: Channel) {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        val mediaItem = MediaItem.fromUri(url)
+        val mediaItem = buildMediaItem(channel)
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
+        }
+    }
+
+    private fun buildMediaItem(channel: Channel): MediaItem {
+        // Check if DRM is needed
+        val hasDrm = !channel.drmLicenseUrl.isNullOrEmpty() && !channel.drmKey.isNullOrEmpty()
+        
+        return if (hasDrm) {
+            // Build DRM configuration for ClearKey
+            // ClearKey UUID: e2719d58-e985-11e3-ac10-0800200c9a66
+            val clearKeyUuid = java.util.UUID.fromString("e2719d58-e985-11e3-ac10-0800200c9a66")
+            val drmConfiguration = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
+                .setLicenseUri(channel.drmLicenseUrl!!)
+                .build()
+            
+            MediaItem.Builder()
+                .setUri(channel.url)
+                .setDrmConfiguration(drmConfiguration)
+                .build()
+        } else {
+            MediaItem.fromUri(channel.url)
         }
     }
 

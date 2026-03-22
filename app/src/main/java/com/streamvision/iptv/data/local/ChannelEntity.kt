@@ -13,5 +13,7 @@ data class ChannelEntity(
     val groupName: String?,
     val playlistId: Long,
     val isFavorite: Boolean = false,
-    val lastWatched: Long? = null
+    val lastWatched: Long? = null,
+    val drmLicenseUrl: String? = null,
+    val drmKey: String? = null
 )

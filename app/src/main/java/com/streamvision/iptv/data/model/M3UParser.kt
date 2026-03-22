@@ -25,26 +25,39 @@ object M3UParser {
             // Check for EXTINF line (channel metadata)
             if (line.startsWith("#EXTINF:")) {
                 val metadata = parseExtInfLine(line)
-                val name = metadata["name"] ?: ""
+                
+                // Get channel name from multiple sources
+                var name = metadata["name"] ?: ""
+                if (name.isEmpty()) {
+                    name = metadata["tvg-name"] ?: ""
+                }
+                if (name.isEmpty()) {
+                    name = metadata["display-name"] ?: ""
+                }
+                
+                // Get DRM information
+                val drmLicenseUrl = metadata["drm-license-url"] ?: ""
+                val drmKeys = metadata["drm-keys"] ?: ""
                 
                 // Next line should be the URL
                 if (i + 1 < lines.size) {
                     val urlLine = lines[i + 1].trim()
                     if (urlLine.isNotEmpty() && !urlLine.startsWith("#")) {
                         val channel = Channel(
-                            name = name,
+                            name = name.ifEmpty { "Unknown Channel" },
                             url = urlLine,
-                            logo = metadata["logo"],
-                            group = metadata["group"],
-                            playlistId = playlistId
+                            logo = metadata["logo"] ?: metadata["tvg-logo"],
+                            group = metadata["group"] ?: metadata["group-title"],
+                            playlistId = playlistId,
+                            drmLicenseUrl = drmLicenseUrl,
+                            drmKey = drmKeys
                         )
                         channels.add(channel)
                         i++ // Skip the URL line
                     }
                 }
             } else if (line.startsWith("#EXTGRP:")) {
-                // Extended group information
-                // This applies to the next channel
+                // Extended group information - skip
             } else if (line.isNotEmpty() && !line.startsWith("#")) {
                 // Direct URL without EXTINF (simple M3U)
                 val channel = Channel(
@@ -62,7 +75,10 @@ object M3UParser {
 
     /**
      * Parse #EXTINF line and extract metadata
-     * Format: #EXTINF:[duration],[tvg-name="..." tvg-logo="..." group-title="..."],Channel Name
+     * Supports multiple formats:
+     * #EXTINF:-1 tvg-name="Name" tvg-logo="..." group-title="..."
+     * #EXTINF:0 group-title="Group",Channel Name
+     * #EXTINF:-1 tvg-name="Name" tvg-logo="..." group-title="...",[DRM license-url="..." keys="..."]
      */
     private fun parseExtInfLine(line: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
@@ -70,13 +86,25 @@ object M3UParser {
         // Remove #EXTINF: prefix
         val extInfContent = line.removePrefix("#EXTINF:")
         
-        // Split by comma to get duration and rest
-        val commaIndex = extInfContent.indexOf(',')
-        if (commaIndex > 0) {
-            val duration = extInfContent.substring(0, commaIndex).trim()
+        // Split by first comma to get duration and rest
+        val firstComma = extInfContent.indexOf(',')
+        if (firstComma > 0) {
+            val duration = extInfContent.substring(0, firstComma).trim()
             result["duration"] = duration
             
-            val rest = extInfContent.substring(commaIndex + 1).trim()
+            var rest = extInfContent.substring(firstComma + 1).trim()
+            
+            // Check for DRM info in brackets [DRM ...]
+            val drmBracketStart = rest.indexOf("[DRM")
+            val drmBracketEnd = rest.indexOf(']')
+            
+            if (drmBracketStart >= 0 && drmBracketEnd > drmBracketStart) {
+                val drmInfo = rest.substring(drmBracketStart + 4, drmBracketEnd).trim()
+                val drmAttrs = parseAttributes(drmInfo)
+                result["drm-license-url"] = drmAttrs["license-url"] ?: ""
+                result["drm-keys"] = drmAttrs["keys"] ?: ""
+                rest = rest.substring(0, drmBracketStart).trim()
+            }
             
             // Check for tvg-info in brackets [tvg-name="..." tvg-logo="..." group-title="..."]
             val bracketStart = rest.indexOf('[')
@@ -88,34 +116,56 @@ object M3UParser {
                 result.putAll(attributes)
                 
                 // Channel name is after the brackets
-                result["name"] = rest.substring(bracketEnd + 1).trim()
+                val afterBracket = rest.substring(bracketEnd + 1).trim()
+                if (afterBracket.isNotEmpty()) {
+                    result["name"] = afterBracket
+                }
             } else {
-                // No tvg-info, the whole rest is the channel name
-                result["name"] = rest
+                // Check for attributes in the extinf line itself (space-separated before comma)
+                val beforeComma = extInfContent.substring(0, firstComma).trim()
+                val attrs = parseAttributes(beforeComma)
+                result.putAll(attrs)
+                
+                // Channel name is after any attributes
+                if (rest.isNotEmpty()) {
+                    // Remove any remaining attributes
+                    val nameMatch = Regex("""([^,\[]+)$""").find(rest)
+                    result["name"] = nameMatch?.groupValues?.get(1)?.trim() ?: rest
+                }
             }
         } else {
-            result["name"] = extInfContent.trim()
+            // No comma - parse attributes from the whole line
+            val attrs = parseAttributes(extInfContent.trim())
+            result.putAll(attrs)
+            result["name"] = attrs["tvg-name"] ?: extInfContent.trim()
         }
         
         return result
     }
 
     /**
-     * Parse attribute string like tvg-name="Name" tvg-logo="url" group-title="Group"
+     * Parse attribute string like tvg-name="Name" tvg-logo="url" group-title="Group" license-url="..." keys="..."
      */
     private fun parseAttributes(attrString: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
-        val regex = """(\w+)=["']([^"']*)["']""".toRegex()
+        
+        // Match attributes with quotes
+        val regex = """(\w+-?\w*)=["']([^"']*)["']""".toRegex()
         
         regex.findAll(attrString).forEach { match ->
-            val key = match.groupValues[1]
+            val key = match.groupValues[1].lowercase()
             val value = match.groupValues[2]
             
-            when (key.lowercase()) {
+            when (key) {
                 "tvg-name" -> result["tvg-name"] = value
-                "tvg-logo" -> result["logo"] = value
-                "group-title" -> result["group"] = value
+                "tvg-logo" -> result["tvg-logo"] = value
+                "logo" -> result["logo"] = value
+                "group-title" -> result["group-title"] = value
+                "group" -> result["group"] = value
                 "tvg-id" -> result["tvg-id"] = value
+                "display-name" -> result["display-name"] = value
+                "drm-license-url", "license-url" -> result["drm-license-url"] = value
+                "drm-keys", "keys" -> result["drm-keys"] = value
             }
         }
         
