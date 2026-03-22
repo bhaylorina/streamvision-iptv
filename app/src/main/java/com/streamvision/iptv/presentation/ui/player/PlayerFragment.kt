@@ -42,6 +42,7 @@ class PlayerFragment : Fragment() {
     private val args: PlayerFragmentArgs by navArgs()
 
     private var player: ExoPlayer? = null
+    private var currentChannel: Channel? = null
 
     companion object {
         private const val TAG = "PlayerFragment"
@@ -140,6 +141,19 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     state.currentChannel?.let { channel ->
+                        if (currentChannel?.id != channel.id) {
+                            currentChannel = channel
+                            // Log all channel info for debugging
+                            Log.d(TAG, "=== Channel Info ===")
+                            Log.d(TAG, "Name: ${channel.name}")
+                            Log.d(TAG, "URL: ${channel.url}")
+                            Log.d(TAG, "DRM Key: ${channel.drmKey}")
+                            Log.d(TAG, "DRM License URL: ${channel.drmLicenseUrl}")
+                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
+                            Log.d(TAG, "Cookie: ${channel.cookie}")
+                            Log.d(TAG, "Referer: ${channel.referer}")
+                        }
+                        
                         if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
                             playChannel(channel)
                         }
@@ -155,30 +169,19 @@ class PlayerFragment : Fragment() {
     }
 
     private fun playChannel(channel: Channel) {
-        Log.d(TAG, "Playing: ${channel.name}")
+        Log.d(TAG, "=== Playing Channel ===")
+        Log.d(TAG, "Name: ${channel.name}")
         Log.d(TAG, "URL: ${channel.url}")
-        Log.d(TAG, "DRM Key: ${channel.drmKey}")
-        Log.d(TAG, "Cookie: ${channel.cookie}")
-        Log.d(TAG, "Referer: ${channel.referer}")
         
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        // Build media item with headers
-        val mediaItem = buildMediaItem(channel)
-        
+        val mediaItem = MediaItem.fromUri(channel.url)
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
-    }
-    
-    private fun buildMediaItem(channel: Channel): MediaItem {
-        // For now, just return simple media item
-        // Headers support requires more complex setup in Media3
-        Log.d(TAG, "Building media item")
-        return MediaItem.fromUri(channel.url)
     }
 
     private fun showError(message: String) {
