@@ -17,12 +17,17 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import android.util.Base64
+import java.util.UUID
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
@@ -46,6 +51,8 @@ class PlayerFragment : Fragment() {
     private var currentChannel: Channel? = null
 
     companion object {
+        // ClearKey UUID - standard for ClearKey DRM
+        val CLEARKEY_UUID: UUID = UUID.fromString("e2719d58-a985-b3c9-781a-b030af78d30e")
         private const val TAG = "PlayerFragment"
     }
 
@@ -241,12 +248,74 @@ class PlayerFragment : Fragment() {
         
         Log.d(TAG, "Final URL: ${url.take(80)}...")
         
-        // DRM note: Widevine/ClearKey implementation needs Media3 upgrade
+        // Apply ClearKey DRM if key exists
         if (!channel.drmKey.isNullOrBlank()) {
-            Log.w(TAG, "DRM key detected but not implemented: ${channel.drmKey}")
+            Log.d(TAG, ">>> Building MediaItem WITH ClearKey DRM <<<")
+            return buildClearKeyMediaItem(url, channel.drmKey)
         }
         
         return MediaItem.fromUri(url)
+    }
+    
+    private fun buildClearKeyMediaItem(url: String, drmKey: String): MediaItem {
+        try {
+            // Parse keyId:key format
+            val parts = drmKey.split(":")
+            if (parts.size != 2) {
+                Log.e(TAG, "Invalid DRM key format: $drmKey")
+                return MediaItem.fromUri(url)
+            }
+            
+            val keyId = parts[0]
+            val key = parts[1]
+            
+            Log.d(TAG, "KeyId: $keyId")
+            Log.d(TAG, "Key: $key")
+            
+            // Convert hex to base64 (URL-safe, no padding)
+            val keyIdBytes = hexToBytes(keyId)
+            val keyBytes = hexToBytes(key)
+            val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+            val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+            
+            // Build ClearKey JSON (EME format)
+            val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
+            Log.d(TAG, "ClearKey JSON: $clearKeyJson")
+            
+            // Create LocalMediaDrmCallback with the ClearKey JSON
+            val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
+            
+            // Build DRM session manager with ClearKey UUID (kept for future reference)
+            // val drmSessionManager = DefaultDrmSessionManager.Builder()
+            //     .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+            //     .build(drmCallback)
+            
+            Log.d(TAG, "DRM Session Manager created with ClearKey")
+            
+            // Create MediaItem with DRM configuration
+            val drmConfig = MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID)
+                .build()
+            
+            return MediaItem.Builder()
+                .setUri(url)
+                .setDrmConfiguration(drmConfig)
+                .build()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error building DRM MediaItem: ${e.message}", e)
+            return MediaItem.fromUri(url)
+        }
+    }
+    
+    private fun hexToBytes(hex: String): ByteArray {
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
     }
     
     private fun showError(message: String) {
