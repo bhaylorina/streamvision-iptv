@@ -79,7 +79,7 @@ class PlayerFragment : Fragment() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun setupPlayer() {
+    private fun setupPlayer(headers: Map<String, String> = emptyMap()) {
         player = ExoPlayer.Builder(requireContext())
             .build()
             .also { exoPlayer ->
@@ -143,14 +143,11 @@ class PlayerFragment : Fragment() {
                     state.currentChannel?.let { channel ->
                         if (currentChannel?.id != channel.id) {
                             currentChannel = channel
-                            // Log all channel info for debugging
                             Log.d(TAG, "=== Channel Info ===")
                             Log.d(TAG, "Name: ${channel.name}")
                             Log.d(TAG, "URL: ${channel.url}")
-                            Log.d(TAG, "DRM Key: ${channel.drmKey}")
-                            Log.d(TAG, "DRM License URL: ${channel.drmLicenseUrl}")
-                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
                             Log.d(TAG, "Cookie: ${channel.cookie}")
+                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
                             Log.d(TAG, "Referer: ${channel.referer}")
                         }
                         
@@ -177,23 +174,8 @@ class PlayerFragment : Fragment() {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        // Build media item with cookie header
-        val mediaItem = if (!channel.cookie.isNullOrBlank()) {
-            Log.d(TAG, ">>> Building media item WITH cookie <<<")
-            
-            // For DASH streams, we need to pass the cookie as part of the URL or use custom data source
-            // Try adding cookie to URL as query parameter (some servers accept this)
-            val urlWithCookie = if (channel.url.contains("?")) {
-                "${channel.url}&Cookie=${channel.cookie}"
-            } else {
-                "${channel.url}?Cookie=${channel.cookie}"
-            }
-            
-            Log.d(TAG, "URL with cookie: ${urlWithCookie.take(100)}...")
-            MediaItem.fromUri(urlWithCookie)
-        } else {
-            MediaItem.fromUri(channel.url)
-        }
+        // Build media item with cookie in URL (works for most servers)
+        val mediaItem = buildMediaItemWithUrlHeaders(channel)
         
         player?.apply {
             setMediaItem(mediaItem)
@@ -201,7 +183,38 @@ class PlayerFragment : Fragment() {
             playWhenReady = true
         }
     }
-
+    
+    /**
+     * Build MediaItem with headers embedded in URL.
+     * This works for many streaming servers.
+     */
+    private fun buildMediaItemWithUrlHeaders(channel: Channel): MediaItem {
+        var url = channel.url
+        
+        // Add headers as URL parameters
+        val params = mutableListOf<String>()
+        
+        if (!channel.cookie.isNullOrBlank()) {
+            // Encode the cookie value
+            val encodedCookie = java.net.URLEncoder.encode(channel.cookie, "UTF-8")
+            params.add("Cookie=$encodedCookie")
+            Log.d(TAG, "Added Cookie to URL: ${channel.cookie.take(30)}...")
+        }
+        
+        if (!channel.referer.isNullOrBlank()) {
+            val encodedRef = java.net.URLEncoder.encode(channel.referer, "UTF-8")
+            params.add("Referer=$encodedRef")
+        }
+        
+        if (params.isNotEmpty()) {
+            val separator = if (url.contains("?")) "&" else "?"
+            url = "$url$separator${params.joinToString("&")}"
+            Log.d(TAG, "Final URL: ${url.take(100)}...")
+        }
+        
+        return MediaItem.fromUri(url)
+    }
+    
     private fun showError(message: String) {
         binding.progressBuffering.visibility = View.GONE
         binding.errorOverlay.visibility = View.VISIBLE
