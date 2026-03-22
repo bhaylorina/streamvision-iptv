@@ -22,15 +22,15 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 🛠️ THE SURGERY: GitHub ko Gradle 8.4 use karne ka order diya!
-    - name: Fix AI's Broken Wrapper
-      run: gradle wrapper --gradle-version 8.4
+    # 🛠️ THE ULTIMATE SURGERY: AI ke wrapper ko chhod kar official Gradle 8.4 install karo
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.4'
 
-    - name: Give Permission to Gradle
-      run: chmod +x gradlew
-
+    # 🚀 Notice kijiye: Yahan hum './gradlew' nahi, direct 'gradle' use kar rahe hain!
     - name: Build Debug APK 🚀
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
 
     - name: Rename APK File
       run: mv app/build/outputs/apk/debug/app-debug.apk StreamVision-App.apk
