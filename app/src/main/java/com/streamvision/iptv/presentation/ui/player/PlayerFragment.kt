@@ -241,9 +241,9 @@ class PlayerFragment : Fragment() {
         
         Log.d(TAG, "Final URL: ${url.take(80)}...")
         
-        // TODO: Add ClearKey DRM support - need to fix Media3 API
+        // DRM note: Widevine/ClearKey implementation needs Media3 upgrade
         if (!channel.drmKey.isNullOrBlank()) {
-            Log.w(TAG, "DRM key detected but not implemented yet: ${channel.drmKey}")
+            Log.w(TAG, "DRM key detected but not implemented: ${channel.drmKey}")
         }
         
         return MediaItem.fromUri(url)
