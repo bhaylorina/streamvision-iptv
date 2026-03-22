@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import android.util.Base64
 import java.util.UUID
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -54,8 +55,8 @@ class PlayerFragment : Fragment() {
     private var drmCallbackHolder: LocalMediaDrmCallback? = null
 
     companion object {
-        // ClearKey UUID - standard for ClearKey DRM
-        val CLEARKEY_UUID: UUID = UUID.fromString("e2719d58-a985-b3c9-781a-b030af78d30e")
+        // ClearKey UUID from Media3 C class
+        val CLEARKEY_UUID: UUID = C.CLEARKEY_UUID
         private const val TAG = "PlayerFragment"
     }
 
@@ -303,38 +304,28 @@ class PlayerFragment : Fragment() {
             Log.d(TAG, "KeyId: $keyId")
             Log.d(TAG, "Key: $key")
             
-            // Convert hex to standard base64 (NO_WRAP, no padding)
+            // Convert hex to standard base64 (NO_WRAP)
             val keyIdBytes = hexToBytes(keyId)
             val keyBytes = hexToBytes(key)
             val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
             val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
             
             // Build ClearKey JSON (EME format)
-            val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
+            val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}]}"""
+            val keySetId = clearKeyJson.toByteArray(Charsets.UTF_8)
             Log.d(TAG, "ClearKey JSON: $clearKeyJson")
             
-            // Create DRM callback
-            val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
-            
-            // Build DRM session manager with ClearKey UUID and callback
-            val drmSessionManager = DefaultDrmSessionManager.Builder()
-                .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                .build(drmCallback)
-            
-            Log.d(TAG, "Created DefaultDrmSessionManager with ClearKey")
-            
-            // Create DRM configuration with ClearKey UUID and license URL
-            // Note: Even for ClearKey, we need to provide a license URI
-            val drmConfig = MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID)
-                .setLicenseUri("https://cwip-shaka-proxy.appspot.com/no_license")
+            // Use C.CLEARKEY_UUID and setKeySetId
+            val drmConfiguration = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
+                .setKeySetId(keySetId)
                 .build()
             
-            // Use MediaItem.Builder with setDrmSessionManager if available
-            val builder = MediaItem.Builder()
-                .setUri(url)
-                .setDrmConfiguration(drmConfig)
+            Log.d(TAG, "Created DrmConfiguration with C.CLEARKEY_UUID and keySetId")
             
-            return builder.build()
+            return MediaItem.Builder()
+                .setUri(url)
+                .setDrmConfiguration(drmConfiguration)
+                .build()
             
         } catch (e: Exception) {
             Log.e(TAG, "Error building DRM MediaItem: ${e.message}", e)
