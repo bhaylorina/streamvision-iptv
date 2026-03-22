@@ -2,8 +2,8 @@ package com.streamvision.iptv.presentation.ui.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,18 +17,30 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import android.util.Base64
+import java.util.UUID
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.DrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSourceFactory
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
-import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
+import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
+@UnstableApi
 @AndroidEntryPoint
 class PlayerFragment : Fragment() {
 
@@ -39,6 +51,14 @@ class PlayerFragment : Fragment() {
     private val args: PlayerFragmentArgs by navArgs()
 
     private var player: ExoPlayer? = null
+    private var currentChannel: Channel? = null
+    private var drmCallbackHolder: LocalMediaDrmCallback? = null
+
+    companion object {
+        // ClearKey UUID from Media3 C class
+        val CLEARKEY_UUID: UUID = C.CLEARKEY_UUID
+        private const val TAG = "PlayerFragment"
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -53,11 +73,9 @@ class PlayerFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         hideSystemUI()
-        setupPlayer()
         setupClickListeners()
         observeState()
         
-        // Load channel
         viewModel.loadChannel(args.channelId)
     }
 
@@ -72,14 +90,130 @@ class PlayerFragment : Fragment() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun setupPlayer() {
+    private fun setupClickListeners() {
+        binding.btnRetry.setOnClickListener {
+            viewModel.uiState.value.currentChannel?.let { channel ->
+                playChannel(channel)
+            }
+        }
+        
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    releasePlayer()
+                    findNavController().popBackStack()
+                }
+            }
+        )
+    }
+
+    private fun observeState() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state ->
+                    state.currentChannel?.let { channel ->
+                        if (currentChannel?.id != channel.id) {
+                            currentChannel = channel
+                            Log.d(TAG, "=== Channel Info ===")
+                            Log.d(TAG, "Name: ${channel.name}")
+                            Log.d(TAG, "URL: ${channel.url}")
+                            Log.d(TAG, "Cookie: ${channel.cookie}")
+                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
+                            Log.d(TAG, "Referer: ${channel.referer}")
+                        }
+                        
+                        // Initialize player with headers
+                        if (player == null) {
+                            setupPlayer(channel)
+                        }
+                        
+                        if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
+                            playChannel(channel)
+                        }
+                        binding.tvChannelName.text = channel.name
+                    }
+                    
+                    if (state.error != null) {
+                        showError(state.error)
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun setupPlayer(channel: Channel) {
+        // Build custom data source factory with HTTP headers
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
+        
+        // Add custom headers
+        val headers = mutableMapOf<String, String>()
+        if (!channel.cookie.isNullOrBlank()) {
+            headers["Cookie"] = channel.cookie
+            Log.d(TAG, "Setting Cookie header: ${channel.cookie.take(30)}...")
+        }
+        if (!channel.userAgent.isNullOrBlank()) {
+            headers["User-Agent"] = channel.userAgent
+            Log.d(TAG, "Setting User-Agent: ${channel.userAgent}")
+        }
+        if (!channel.referer.isNullOrBlank()) {
+            headers["Referer"] = channel.referer
+            Log.d(TAG, "Setting Referer: ${channel.referer}")
+        }
+        
+        // Use reflection to set headers (workaround for API)
+        try {
+            val method = httpDataSourceFactory.javaClass.getMethod("setHttpRequestHeaders", Map::class.java)
+            method.invoke(httpDataSourceFactory, headers)
+            Log.d(TAG, "Applied HTTP headers via reflection: ${headers.keys}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set headers via reflection: ${e.message}")
+        }
+        
+        // Prepare DRM callback for ClearKey if needed
+        drmCallbackHolder = null
+        if (!channel.drmKey.isNullOrBlank()) {
+            try {
+                val parts = channel.drmKey.split(":")
+                if (parts.size == 2) {
+                    val keyId = parts[0]
+                    val key = parts[1]
+                    
+                    // Convert hex to standard base64
+                    val keyIdBytes = hexToBytes(keyId)
+                    val keyBytes = hexToBytes(key)
+                    val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
+                    val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
+                    
+                    val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
+                    Log.d(TAG, "ClearKey JSON: $clearKeyJson")
+                    
+                    // Create the callback that will provide keys
+                    drmCallbackHolder = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
+                    Log.d(TAG, "Created LocalMediaDrmCallback for ClearKey")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating DRM callback: ${e.message}", e)
+            }
+        }
+        
+        // Create media source factory with custom data source
+        val mediaSourceFactory = DefaultMediaSourceFactory(requireContext())
+            .setDataSourceFactory(httpDataSourceFactory)
+        
+        // Build player
         player = ExoPlayer.Builder(requireContext())
+            .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .also { exoPlayer ->
                 binding.playerView.player = exoPlayer
                 
                 exoPlayer.addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
+                        Log.d(TAG, "Playback state: $state")
                         when (state) {
                             Player.STATE_BUFFERING -> {
                                 binding.progressBuffering.visibility = View.VISIBLE
@@ -103,63 +237,113 @@ class PlayerFragment : Fragment() {
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        showError(error.message ?: getString(R.string.error_playback))
+                        Log.e(TAG, "Player error: ${error.message}", error)
+                        showError("${error.message}\n\nError Code: ${error.errorCode}")
                     }
                 })
             }
     }
 
-    private fun setupClickListeners() {
-        binding.btnRetry.setOnClickListener {
-            viewModel.uiState.value.currentChannel?.let { channel ->
-                playChannel(channel.url)
-            }
-        }
+    private fun playChannel(channel: Channel) {
+        Log.d(TAG, "=== Playing Channel ===")
+        Log.d(TAG, "Name: ${channel.name}")
+        Log.d(TAG, "URL: ${channel.url}")
+        Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "DRM Key: ${channel.drmKey}")
         
-        // Handle back press
-        requireActivity().onBackPressedDispatcher.addCallback(
-            viewLifecycleOwner,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    releasePlayer()
-                    findNavController().popBackStack()
-                }
-            }
-        )
-    }
-
-    private fun observeState() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { state ->
-                    state.currentChannel?.let { channel ->
-                        // Only play if not already playing this URL
-                        if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
-                            playChannel(channel.url)
-                        }
-                        binding.tvChannelName.text = channel.name
-                    }
-                    
-                    if (state.error != null) {
-                        showError(state.error)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun playChannel(url: String) {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        val mediaItem = MediaItem.fromUri(url)
+        // Build media item with DRM if key exists
+        val mediaItem = buildMediaItem(channel)
+        
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
     }
-
+    
+    private fun buildMediaItem(channel: Channel): MediaItem {
+        Log.d(TAG, ">>> Building MediaItem <<<")
+        Log.d(TAG, "URL: ${channel.url}")
+        Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "DRM Key: ${channel.drmKey}")
+        
+        // Build URL with cookie
+        var url = channel.url
+        if (!channel.cookie.isNullOrBlank()) {
+            val separator = if (url.contains("?")) "&" else "?"
+            url = "$url${separator}Cookie=${channel.cookie}"
+            Log.d(TAG, "Added Cookie to URL")
+        }
+        
+        Log.d(TAG, "Final URL: ${url.take(80)}...")
+        
+        // Apply ClearKey DRM if key exists
+        if (!channel.drmKey.isNullOrBlank()) {
+            Log.d(TAG, ">>> Building MediaItem WITH ClearKey DRM <<<")
+            return buildClearKeyMediaItem(url, channel.drmKey)
+        }
+        
+        return MediaItem.fromUri(url)
+    }
+    
+    private fun buildClearKeyMediaItem(url: String, drmKey: String): MediaItem {
+        try {
+            // Parse keyId:key format
+            val parts = drmKey.split(":")
+            if (parts.size != 2) {
+                Log.e(TAG, "Invalid DRM key format: $drmKey")
+                return MediaItem.fromUri(url)
+            }
+            
+            val keyId = parts[0]
+            val key = parts[1]
+            
+            Log.d(TAG, "KeyId: $keyId")
+            Log.d(TAG, "Key: $key")
+            
+            // Convert hex to standard base64 (NO_WRAP)
+            val keyIdBytes = hexToBytes(keyId)
+            val keyBytes = hexToBytes(key)
+            val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
+            val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
+            
+            // Build ClearKey JSON (EME format)
+            val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}]}"""
+            val keySetId = clearKeyJson.toByteArray(Charsets.UTF_8)
+            Log.d(TAG, "ClearKey JSON: $clearKeyJson")
+            
+            // Use C.CLEARKEY_UUID and setKeySetId
+            val drmConfiguration = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
+                .setKeySetId(keySetId)
+                .build()
+            
+            Log.d(TAG, "Created DrmConfiguration with C.CLEARKEY_UUID and keySetId")
+            
+            return MediaItem.Builder()
+                .setUri(url)
+                .setDrmConfiguration(drmConfiguration)
+                .build()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error building DRM MediaItem: ${e.message}", e)
+            return MediaItem.fromUri(url)
+        }
+    }
+    
+    private fun hexToBytes(hex: String): ByteArray {
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
+    
     private fun showError(message: String) {
         binding.progressBuffering.visibility = View.GONE
         binding.errorOverlay.visibility = View.VISIBLE
@@ -172,9 +356,7 @@ class PlayerFragment : Fragment() {
         val window = activity?.window ?: return
         WindowCompat.setDecorFitsSystemWindows(window, true)
         
-        player?.let { exoPlayer ->
-            exoPlayer.release()
-        }
+        player?.release()
         player = null
     }
 

@@ -14,7 +14,12 @@ fun ChannelEntity.toDomain(): Channel {
         group = groupName,
         playlistId = playlistId,
         isFavorite = isFavorite,
-        lastWatched = lastWatched
+        lastWatched = lastWatched,
+        drmLicenseUrl = drmLicenseUrl,
+        drmKey = drmKey,
+        userAgent = userAgent,
+        cookie = cookie,
+        referer = referer
     )
 }
 
@@ -27,7 +32,12 @@ fun Channel.toEntity(): ChannelEntity {
         groupName = group,
         playlistId = playlistId,
         isFavorite = isFavorite,
-        lastWatched = lastWatched
+        lastWatched = lastWatched,
+        drmLicenseUrl = drmLicenseUrl,
+        drmKey = drmKey,
+        userAgent = userAgent,
+        cookie = cookie,
+        referer = referer
     )
 }
 

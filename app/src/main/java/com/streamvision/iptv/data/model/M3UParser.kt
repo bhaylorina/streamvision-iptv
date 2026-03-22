@@ -1,145 +1,239 @@
 package com.streamvision.iptv.data.model
 
+import android.util.Log
 import com.streamvision.iptv.domain.model.Channel
+import java.util.regex.Pattern
 
 /**
  * M3U/M3U8 Playlist Parser
- * Parses standard M3U playlists with extended information
+ * Based on Bluise IPTV Parser
  */
 object M3UParser {
 
     /**
      * Parse M3U content and return list of channels
-     * @param content The M3U file content as string
-     * @param playlistId The ID of the playlist this content belongs to
-     * @return List of parsed channels
      */
     fun parse(content: String, playlistId: Long): List<Channel> {
         val channels = mutableListOf<Channel>()
         val lines = content.lines()
         
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i].trim()
+        // Variables for current channel
+        var currentTitle: String? = null
+        var currentLogo: String? = null
+        var currentGroup: String? = null
+        var currentLicenseKey: String? = null
+        var currentKeyId: String? = null
+        var currentKey: String? = null
+        var currentUa: String? = null
+        var currentCookie: String? = null
+        var currentReferer: String? = null
+        var currentDrmScheme: String? = null
+        
+        for (line in lines) {
+            val trim = line.trim()
+            if (trim.isEmpty()) continue
             
-            // Check for EXTINF line (channel metadata)
-            if (line.startsWith("#EXTINF:")) {
-                val metadata = parseExtInfLine(line)
-                val name = metadata["name"] ?: ""
+            // Parse EXTINF line
+            if (trim.startsWith("#EXTINF:")) {
+                // Get channel name - everything after last comma
+                currentTitle = trim.substringAfterLast(",").trim()
                 
-                // Next line should be the URL
-                if (i + 1 < lines.size) {
-                    val urlLine = lines[i + 1].trim()
-                    if (urlLine.isNotEmpty() && !urlLine.startsWith("#")) {
-                        val channel = Channel(
-                            name = name,
-                            url = urlLine,
-                            logo = metadata["logo"],
-                            group = metadata["group"],
-                            playlistId = playlistId
-                        )
-                        channels.add(channel)
-                        i++ // Skip the URL line
+                // Parse all attributes using regex
+                val regex = Pattern.compile("""([a-zA-Z0-9_.-]+)=?("[^"]*"|[^\s"]+)""")
+                val matcher = regex.matcher(trim)
+                
+                while (matcher.find()) {
+                    var keyName = matcher.group(1)?.lowercase() ?: ""
+                    var value = matcher.group(2) ?: ""
+                    
+                    // Remove quotes from value
+                    if (value.startsWith("\"") && value.endsWith("\"")) {
+                        value = value.substring(1, value.length - 1)
+                    }
+                    value = value.trim()
+                    
+                    when (keyName) {
+                        "tvg-logo", "logo" -> currentLogo = value
+                        "group-title" -> currentGroup = value
+                        "keyid", "kid" -> currentKeyId = value
+                        "key", "license_key" -> currentKey = value
+                        "tvg-name" -> if (currentTitle.isNullOrBlank()) currentTitle = value
                     }
                 }
-            } else if (line.startsWith("#EXTGRP:")) {
-                // Extended group information
-                // This applies to the next channel
-            } else if (line.isNotEmpty() && !line.startsWith("#")) {
-                // Direct URL without EXTINF (simple M3U)
+            }
+            // Parse EXTGRP line
+            else if (trim.startsWith("#EXTGRP:")) {
+                currentGroup = trim.substringAfter(":").trim()
+            }
+            // Parse EXTHTTP (headers/cookies) - JSON format
+            else if (trim.startsWith("#EXTHTTP:")) {
+                try {
+                    val jsonStr = trim.removePrefix("#EXTHTTP:").trim()
+                    Log.d("M3UParser", "=== FOUND EXTHTTP ===")
+                    Log.d("M3UParser", "Raw: $jsonStr")
+                    val json = org.json.JSONObject(jsonStr)
+                    val keys = json.keys().asSequence().toList()
+                    Log.d("M3UParser", "JSON keys: $keys")
+                    if (json.has("cookie")) {
+                        currentCookie = json.optString("cookie")
+                        Log.d("M3UParser", "✓ Parsed cookie: ${currentCookie?.take(50)}...")
+                    } else {
+                        Log.d("M3UParser", "✗ No 'cookie' key in JSON")
+                    }
+                    if (json.has("user-agent")) currentUa = json.optString("user-agent")
+                    if (json.has("User-Agent")) currentUa = json.optString("User-Agent")
+                    if (json.has("referer")) currentReferer = json.optString("referer")
+                } catch (e: Exception) {
+                    Log.e("M3UParser", "Error parsing EXTHTTP", e)
+                }
+            }
+            // Parse EXTVLCOPT (VLC options like http-cookie, http-user-agent)
+            else if (trim.startsWith("#EXTVLCOPT:")) {
+                try {
+                    val opt = trim.removePrefix("#EXTVLCOPT:").trim()
+                    Log.d("M3UParser", "EXTVLCOPT: $opt")
+                    
+                    if (opt.startsWith("http-cookie=")) {
+                        currentCookie = opt.removePrefix("http-cookie=").trim()
+                        Log.d("M3UParser", "Parsed cookie from EXTVLCOPT: $currentCookie")
+                    }
+                    if (opt.startsWith("http-user-agent=")) {
+                        currentUa = opt.removePrefix("http-user-agent=").trim()
+                        Log.d("M3UParser", "Parsed UA from EXTVLCOPT: $currentUa")
+                    }
+                    if (opt.startsWith("http-referrer=")) {
+                        currentReferer = opt.removePrefix("http-referrer=").trim()
+                    }
+                } catch (e: Exception) {
+                    Log.e("M3UParser", "Error parsing EXTVLCOPT", e)
+                }
+            }
+            // Parse URL with pipe headers (format: url|Cookie=xxx|User-Agent=xxx)
+            else if (!trim.startsWith("#") && trim.contains("|")) {
+                val pipeParts = trim.split("\\|")
+                if (pipeParts.size > 1) {
+                    val url = pipeParts[0].trim()
+                    // Only apply if URL looks valid
+                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                        for (i in 1 until pipeParts.size) {
+                            val part = pipeParts[i].trim()
+                            if (part.startsWith("Cookie=")) {
+                                currentCookie = part.removePrefix("Cookie=").trim()
+                                Log.d("M3UParser", "Parsed cookie from URL: $currentCookie")
+                            }
+                            if (part.startsWith("User-Agent=")) {
+                                currentUa = part.removePrefix("User-Agent=").trim()
+                            }
+                            if (part.startsWith("Referer=")) {
+                                currentReferer = part.removePrefix("Referer=").trim()
+                            }
+                        }
+                    }
+                }
+            }
+            // Parse KODIPROP (DRM info)
+            else if (trim.startsWith("#KODIPROP:")) {
+                val prop = trim.removePrefix("#KODIPROP:").trim()
+                
+                if (prop.startsWith("inputstream.adaptive.license_type=")) {
+                    currentDrmScheme = prop.substringAfter("=").trim()
+                }
+                else if (prop.startsWith("inputstream.adaptive.license_key=")) {
+                    val keyValue = prop.removePrefix("inputstream.adaptive.license_key=").trim()
+                    
+                    // Check for keyid= and key= format
+                    if (keyValue.contains("keyid=") && keyValue.contains("key=")) {
+                        val kidMatcher = Pattern.compile("keyid=([a-fA-F0-9]+)").matcher(keyValue)
+                        if (kidMatcher.find()) currentKeyId = kidMatcher.group(1)
+                        val keyMatcher = Pattern.compile("key=([a-fA-F0-9]+)").matcher(keyValue)
+                        if (keyMatcher.find()) currentKey = keyMatcher.group(1)
+                    }
+                    // Check for keyid:key format
+                    else if (keyValue.contains(":") && !keyValue.startsWith("http")) {
+                        val parts = keyValue.split(":")
+                        if (parts.size >= 2) {
+                            currentKeyId = parts[0].trim()
+                            currentKey = parts[1].trim()
+                        }
+                    }
+                    // Check for HTTP URL format
+                    else if (keyValue.startsWith("http")) {
+                        currentLicenseKey = keyValue
+                    }
+                    else {
+                        // Default: try parsing as keyid:key
+                        currentKey = keyValue
+                    }
+                }
+            }
+            // Parse EXTVLCOPT
+            else if (trim.startsWith("#EXTVLCOPT:")) {
+                if (trim.contains("http-user-agent=")) {
+                    currentUa = trim.substringAfter("=").trim()
+                }
+                if (trim.contains("http-referrer=")) {
+                    currentReferer = trim.substringAfter("=").trim()
+                }
+                if (trim.contains("http-cookie=")) {
+                    currentCookie = trim.substringAfter("=").trim()
+                }
+            }
+            // URL line (not starting with #)
+            else if (!trim.startsWith("#")) {
+                var finalUrl = trim
+                
+                // Handle URL with pipe-separated headers
+                if (trim.contains("|")) {
+                    val parts = trim.split("|")
+                    finalUrl = parts[0].trim()
+                    
+                    if (parts.size > 1) {
+                        val params = parts[1].split("&")
+                        for (p in params) {
+                            val keyVal = p.split("=", limit = 2)
+                            if (keyVal.size == 2) {
+                                val headerKey = keyVal[0].trim()
+                                val headerValue = keyVal[1].trim()
+                                
+                                when {
+                                    headerKey.equals("User-Agent", true) -> currentUa = headerValue
+                                    headerKey.equals("Referer", true) -> currentReferer = headerValue
+                                    headerKey.equals("Cookie", true) -> currentCookie = headerValue
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 val channel = Channel(
-                    name = extractNameFromUrl(line),
-                    url = line,
-                    playlistId = playlistId
+                    name = currentTitle ?: "Unknown Channel",
+                    url = finalUrl,
+                    logo = currentLogo,
+                    group = if (currentGroup.isNullOrEmpty()) "Others" else currentGroup,
+                    playlistId = playlistId,
+                    drmLicenseUrl = currentLicenseKey,
+                    drmKey = if (currentKey != null) "$currentKeyId:$currentKey" else null,
+                    userAgent = currentUa,
+                    cookie = currentCookie,
+                    referer = currentReferer
                 )
                 channels.add(channel)
+                
+                // Reset all variables for next channel
+                currentTitle = null
+                currentLogo = null
+                currentGroup = null
+                currentLicenseKey = null
+                currentKeyId = null
+                currentKey = null
+                currentUa = null
+                currentCookie = null
+                currentReferer = null
+                currentDrmScheme = null
             }
-            i++
         }
         
         return channels
-    }
-
-    /**
-     * Parse #EXTINF line and extract metadata
-     * Format: #EXTINF:[duration],[tvg-name="..." tvg-logo="..." group-title="..."],Channel Name
-     */
-    private fun parseExtInfLine(line: String): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        
-        // Remove #EXTINF: prefix
-        val extInfContent = line.removePrefix("#EXTINF:")
-        
-        // Split by comma to get duration and rest
-        val commaIndex = extInfContent.indexOf(',')
-        if (commaIndex > 0) {
-            val duration = extInfContent.substring(0, commaIndex).trim()
-            result["duration"] = duration
-            
-            val rest = extInfContent.substring(commaIndex + 1).trim()
-            
-            // Check for tvg-info in brackets [tvg-name="..." tvg-logo="..." group-title="..."]
-            val bracketStart = rest.indexOf('[')
-            val bracketEnd = rest.indexOf(']')
-            
-            if (bracketStart >= 0 && bracketEnd > bracketStart) {
-                val tvgInfo = rest.substring(bracketStart + 1, bracketEnd)
-                val attributes = parseAttributes(tvgInfo)
-                result.putAll(attributes)
-                
-                // Channel name is after the brackets
-                result["name"] = rest.substring(bracketEnd + 1).trim()
-            } else {
-                // No tvg-info, the whole rest is the channel name
-                result["name"] = rest
-            }
-        } else {
-            result["name"] = extInfContent.trim()
-        }
-        
-        return result
-    }
-
-    /**
-     * Parse attribute string like tvg-name="Name" tvg-logo="url" group-title="Group"
-     */
-    private fun parseAttributes(attrString: String): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        val regex = """(\w+)=["']([^"']*)["']""".toRegex()
-        
-        regex.findAll(attrString).forEach { match ->
-            val key = match.groupValues[1]
-            val value = match.groupValues[2]
-            
-            when (key.lowercase()) {
-                "tvg-name" -> result["tvg-name"] = value
-                "tvg-logo" -> result["logo"] = value
-                "group-title" -> result["group"] = value
-                "tvg-id" -> result["tvg-id"] = value
-            }
-        }
-        
-        return result
-    }
-
-    /**
-     * Extract a readable name from URL
-     */
-    private fun extractNameFromUrl(url: String): String {
-        return try {
-            val path = url.substringAfter("://").substringBefore("?")
-            val fileName = path.substringAfterLast("/").substringBeforeLast(".")
-            if (fileName.isNotEmpty()) {
-                fileName.replace("_", " ").replace("-", " ")
-                    .split(" ").joinToString(" ") { word ->
-                        word.replaceFirstChar { it.uppercase() }
-                    }
-            } else {
-                "Unknown Channel"
-            }
-        } catch (e: Exception) {
-            "Unknown Channel"
-        }
     }
 
     /**

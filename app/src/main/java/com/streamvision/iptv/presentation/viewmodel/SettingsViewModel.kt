@@ -28,7 +28,7 @@ class SettingsViewModel @Inject constructor(
         loadPlaylists()
     }
 
-    private fun loadPlaylists() {
+    fun loadPlaylists() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             getPlaylistsUseCase().collect { playlists ->
