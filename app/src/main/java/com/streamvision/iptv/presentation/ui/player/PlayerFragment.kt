@@ -172,11 +172,16 @@ class PlayerFragment : Fragment() {
         Log.d(TAG, "=== Playing Channel ===")
         Log.d(TAG, "Name: ${channel.name}")
         Log.d(TAG, "URL: ${channel.url}")
+        Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "UserAgent: ${channel.userAgent}")
+        Log.d(TAG, "Referer: ${channel.referer}")
         
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
+        // Build media item - for now simple
         val mediaItem = MediaItem.fromUri(channel.url)
+        
         player?.apply {
             setMediaItem(mediaItem)
             prepare()

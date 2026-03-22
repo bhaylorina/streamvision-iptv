@@ -65,7 +65,7 @@ object M3UParser {
             else if (trim.startsWith("#EXTGRP:")) {
                 currentGroup = trim.substringAfter(":").trim()
             }
-            // Parse EXTHTTP (headers/cookies)
+            // Parse EXTHTTP (headers/cookies) - JSON format
             else if (trim.startsWith("#EXTHTTP:")) {
                 try {
                     val jsonStr = trim.removePrefix("#EXTHTTP:").trim()
@@ -80,6 +80,50 @@ object M3UParser {
                     if (json.has("referer")) currentReferer = json.optString("referer")
                 } catch (e: Exception) {
                     Log.e("M3UParser", "Error parsing EXTHTTP", e)
+                }
+            }
+            // Parse EXTVLCOPT (VLC options like http-cookie, http-user-agent)
+            else if (trim.startsWith("#EXTVLCOPT:")) {
+                try {
+                    val opt = trim.removePrefix("#EXTVLCOPT:").trim()
+                    Log.d("M3UParser", "EXTVLCOPT: $opt")
+                    
+                    if (opt.startsWith("http-cookie=")) {
+                        currentCookie = opt.removePrefix("http-cookie=").trim()
+                        Log.d("M3UParser", "Parsed cookie from EXTVLCOPT: $currentCookie")
+                    }
+                    if (opt.startsWith("http-user-agent=")) {
+                        currentUa = opt.removePrefix("http-user-agent=").trim()
+                        Log.d("M3UParser", "Parsed UA from EXTVLCOPT: $currentUa")
+                    }
+                    if (opt.startsWith("http-referrer=")) {
+                        currentReferer = opt.removePrefix("http-referrer=").trim()
+                    }
+                } catch (e: Exception) {
+                    Log.e("M3UParser", "Error parsing EXTVLCOPT", e)
+                }
+            }
+            // Parse URL with pipe headers (format: url|Cookie=xxx|User-Agent=xxx)
+            else if (!trim.startsWith("#") && trim.contains("|")) {
+                val pipeParts = trim.split("\\|")
+                if (pipeParts.size > 1) {
+                    val url = pipeParts[0].trim()
+                    // Only apply if URL looks valid
+                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                        for (i in 1 until pipeParts.size) {
+                            val part = pipeParts[i].trim()
+                            if (part.startsWith("Cookie=")) {
+                                currentCookie = part.removePrefix("Cookie=").trim()
+                                Log.d("M3UParser", "Parsed cookie from URL: $currentCookie")
+                            }
+                            if (part.startsWith("User-Agent=")) {
+                                currentUa = part.removePrefix("User-Agent=").trim()
+                            }
+                            if (part.startsWith("Referer=")) {
+                                currentReferer = part.removePrefix("Referer=").trim()
+                            }
+                        }
+                    }
                 }
             }
             // Parse KODIPROP (DRM info)
