@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/channelsFragment">
+
+    <fragment
+        android:id="@+id/channelsFragment"
+        android:name="com.streamvision.iptv.presentation.ui.channels.ChannelsFragment"
+        android:label="@string/channels">
+        <action
+            android:id="@+id/action_channels_to_player"
+            app:destination="@id/playerFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/favoritesFragment"
+        android:name="com.streamvision.iptv.presentation.ui.favorites.FavoritesFragment"
+        android:label="@string/favorites">
+        <action
+            android:id="@+id/action_favorites_to_player"
+            app:destination="@id/playerFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/settingsFragment"
+        android:name="com.streamvision.iptv.presentation.ui.settings.SettingsFragment"
+        android:label="@string/settings" />
+
+    <fragment
+        android:id="@+id/playerFragment"
+        android:name="com.streamvision.iptv.presentation.ui.player.PlayerFragment"
+        android:label="Player">
+        <argument
+            android:name="channelId"
+            app:argType="long" />
+    </fragment>
+
+</navigation>
