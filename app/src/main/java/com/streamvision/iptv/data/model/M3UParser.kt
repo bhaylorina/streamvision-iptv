@@ -69,11 +69,16 @@ object M3UParser {
             else if (trim.startsWith("#EXTHTTP:")) {
                 try {
                     val jsonStr = trim.removePrefix("#EXTHTTP:").trim()
-                    Log.d("M3UParser", "EXTHTTP: $jsonStr")
+                    Log.d("M3UParser", "=== FOUND EXTHTTP ===")
+                    Log.d("M3UParser", "Raw: $jsonStr")
                     val json = org.json.JSONObject(jsonStr)
+                    val keys = json.keys().asSequence().toList()
+                    Log.d("M3UParser", "JSON keys: $keys")
                     if (json.has("cookie")) {
                         currentCookie = json.optString("cookie")
-                        Log.d("M3UParser", "Parsed cookie: $currentCookie")
+                        Log.d("M3UParser", "✓ Parsed cookie: ${currentCookie?.take(50)}...")
+                    } else {
+                        Log.d("M3UParser", "✗ No 'cookie' key in JSON")
                     }
                     if (json.has("user-agent")) currentUa = json.optString("user-agent")
                     if (json.has("User-Agent")) currentUa = json.optString("User-Agent")

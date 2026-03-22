@@ -16,7 +16,10 @@ fun ChannelEntity.toDomain(): Channel {
         isFavorite = isFavorite,
         lastWatched = lastWatched,
         drmLicenseUrl = drmLicenseUrl,
-        drmKey = drmKey
+        drmKey = drmKey,
+        userAgent = userAgent,
+        cookie = cookie,
+        referer = referer
     )
 }
 
@@ -31,7 +34,10 @@ fun Channel.toEntity(): ChannelEntity {
         isFavorite = isFavorite,
         lastWatched = lastWatched,
         drmLicenseUrl = drmLicenseUrl,
-        drmKey = drmKey
+        drmKey = drmKey,
+        userAgent = userAgent,
+        cookie = cookie,
+        referer = referer
     )
 }
 
