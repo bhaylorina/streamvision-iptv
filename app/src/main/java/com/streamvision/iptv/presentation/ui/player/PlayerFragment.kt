@@ -184,13 +184,17 @@ class PlayerFragment : Fragment() {
 
     private fun buildMediaItem(channel: Channel): MediaItem {
         // Check if DRM is needed
-        val hasDrm = !channel.drmKey.isNullOrBlank()
+        val hasDrmKey = !channel.drmKey.isNullOrBlank()
+        val hasLicenseUrl = !channel.drmLicenseUrl.isNullOrBlank()
         
-        Log.d(TAG, "Building media item - hasDrm: $hasDrm")
+        Log.d(TAG, "Building media item - hasDrmKey: $hasDrmKey, hasLicenseUrl: $hasLicenseUrl")
         
-        if (hasDrm) {
+        // Build HTTP data source factory with headers if needed
+        // For now, we'll use default - but headers would be added here
+        
+        // If we have a DRM key, try DRM
+        if (hasDrmKey) {
             try {
-                // Parse the key format: kid:key
                 val drmKey = channel.drmKey!!
                 val parts = drmKey.split(":")
                 
@@ -201,13 +205,16 @@ class PlayerFragment : Fragment() {
                     Log.d(TAG, "KID (hex): $kidHex")
                     Log.d(TAG, "KEY (hex): $keyHex")
                     
-                    // Build ClearKey JSON
-                    // Format: {"keys":[{"kty":"oct","k":"<base64-key>","kid":"<base64-kid>"}],"type":"temporary"}
+                    // Convert hex to bytes then base64 for ClearKey
                     val kidBytes = hexStringToByteArray(kidHex)
                     val keyBytes = hexStringToByteArray(keyHex)
                     val kidBase64 = android.util.Base64.encodeToString(kidBytes, android.util.Base64.NO_WRAP)
                     val keyBase64 = android.util.Base64.encodeToString(keyBytes, android.util.Base64.NO_WRAP)
                     
+                    Log.d(TAG, "KID (base64): $kidBase64")
+                    Log.d(TAG, "KEY (base64): $keyBase64")
+                    
+                    // Build ClearKey JSON - proper format
                     val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$kidBase64"}],"type":"temporary"}"""
                     
                     Log.d(TAG, "ClearKey JSON: $clearKeyJson")
@@ -215,20 +222,24 @@ class PlayerFragment : Fragment() {
                     // ClearKey UUID
                     val clearKeyUuid = UUID.fromString("e2719d58-e985-11e3-ac10-0800200c9a66")
                     
-                    val drmConfiguration = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
-                        .setLicenseRequestHeaders(
-                            mapOf(
-                                "Content-Type" to "application/json"
-                            )
-                        )
-                        .build()
+                    // Build DRM configuration - use offline keys for ClearKey
+                    val drmBuilder = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
                     
-                    // Build media item with DRM
+                    // For Jio/ClearKey streams, we need offline key
+                    // The key format in playlist is already the actual key
+                    // Use setLicenseUri for key server if available
+                    if (hasLicenseUrl) {
+                        Log.d(TAG, "Using license URL: ${channel.drmLicenseUrl}")
+                        drmBuilder.setLicenseUri(channel.drmLicenseUrl)
+                    }
+                    
+                    val drmConfiguration = drmBuilder.build()
+                    
                     val mediaItemBuilder = MediaItem.Builder()
                         .setUri(channel.url)
                         .setDrmConfiguration(drmConfiguration)
                     
-                    Log.d(TAG, "MediaItem built with DRM configuration")
+                    Log.d(TAG, "MediaItem built with ClearKey DRM")
                     
                     return mediaItemBuilder.build()
                 }
@@ -237,7 +248,7 @@ class PlayerFragment : Fragment() {
             }
         }
         
-        // No DRM - return simple media item
+        // Try without DRM (for non-DRM streams or as fallback)
         Log.d(TAG, "Using regular media item without DRM")
         return MediaItem.fromUri(channel.url)
     }
