@@ -21,7 +21,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
@@ -130,7 +132,42 @@ class PlayerFragment : Fragment() {
     }
     
     private fun setupPlayer(channel: Channel) {
+        // Build custom data source factory with HTTP headers
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
+        
+        // Add custom headers
+        val headers = mutableMapOf<String, String>()
+        if (!channel.cookie.isNullOrBlank()) {
+            headers["Cookie"] = channel.cookie
+            Log.d(TAG, "Setting Cookie header: ${channel.cookie.take(30)}...")
+        }
+        if (!channel.userAgent.isNullOrBlank()) {
+            headers["User-Agent"] = channel.userAgent
+            Log.d(TAG, "Setting User-Agent: ${channel.userAgent}")
+        }
+        if (!channel.referer.isNullOrBlank()) {
+            headers["Referer"] = channel.referer
+            Log.d(TAG, "Setting Referer: ${channel.referer}")
+        }
+        
+        // Use reflection to set headers (workaround for API)
+        try {
+            val method = httpDataSourceFactory.javaClass.getMethod("setHttpRequestHeaders", Map::class.java)
+            method.invoke(httpDataSourceFactory, headers)
+            Log.d(TAG, "Applied HTTP headers via reflection: ${headers.keys}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set headers via reflection: ${e.message}")
+        }
+        
+        // Create media source factory with custom data source
+        val mediaSourceFactory = DefaultMediaSourceFactory(requireContext())
+            .setDataSourceFactory(httpDataSourceFactory)
+        
         player = ExoPlayer.Builder(requireContext())
+            .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .also { exoPlayer ->
                 binding.playerView.player = exoPlayer
@@ -173,21 +210,33 @@ class PlayerFragment : Fragment() {
         Log.d(TAG, "Name: ${channel.name}")
         Log.d(TAG, "URL: ${channel.url}")
         Log.d(TAG, "Cookie: ${channel.cookie}")
+        Log.d(TAG, "DRM Key: ${channel.drmKey}")
         
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        // Recreate player with new headers if needed
-        releasePlayer()
-        setupPlayer(channel)
-        
-        val mediaItem = MediaItem.fromUri(channel.url)
+        // Build media item with DRM if key exists
+        val mediaItem = buildMediaItem(channel)
         
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
+    }
+    
+    private fun buildMediaItem(channel: Channel): MediaItem {
+        var url = channel.url
+        
+        // Add cookie as URL parameter (works for most servers)
+        if (!channel.cookie.isNullOrBlank()) {
+            val separator = if (url.contains("?")) "&" else "?"
+            url = "$url${separator}Cookie=${channel.cookie}"
+            Log.d(TAG, "Added Cookie to URL: ${channel.cookie.take(30)}...")
+        }
+        
+        Log.d(TAG, "Final URL: ${url.take(80)}...")
+        return MediaItem.fromUri(url)
     }
     
     private fun showError(message: String) {
