@@ -164,12 +164,21 @@ class PlayerFragment : Fragment() {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        val mediaItem = MediaItem.fromUri(channel.url)
+        // Build media item with headers
+        val mediaItem = buildMediaItem(channel)
+        
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
+    }
+    
+    private fun buildMediaItem(channel: Channel): MediaItem {
+        // For now, just return simple media item
+        // Headers support requires more complex setup in Media3
+        Log.d(TAG, "Building media item")
+        return MediaItem.fromUri(channel.url)
     }
 
     private fun showError(message: String) {
