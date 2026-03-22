@@ -22,9 +22,9 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 🛠️ THE SURGERY: AI ka kharab wrapper hata kar fresh setup kar rahe hain
+    # 🛠️ THE SURGERY: GitHub ko Gradle 8.4 use karne ka order diya!
     - name: Fix AI's Broken Wrapper
-      run: gradle wrapper
+      run: gradle wrapper --gradle-version 8.4
 
     - name: Give Permission to Gradle
       run: chmod +x gradlew
