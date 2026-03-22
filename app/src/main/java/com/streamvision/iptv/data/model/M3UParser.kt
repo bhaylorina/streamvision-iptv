@@ -1,5 +1,6 @@
 package com.streamvision.iptv.data.model
 
+import android.util.Log
 import com.streamvision.iptv.domain.model.Channel
 import java.util.regex.Pattern
 
@@ -68,11 +69,18 @@ object M3UParser {
             else if (trim.startsWith("#EXTHTTP:")) {
                 try {
                     val jsonStr = trim.removePrefix("#EXTHTTP:").trim()
+                    Log.d("M3UParser", "EXTHTTP: $jsonStr")
                     val json = org.json.JSONObject(jsonStr)
-                    if (json.has("cookie")) currentCookie = json.optString("cookie")
+                    if (json.has("cookie")) {
+                        currentCookie = json.optString("cookie")
+                        Log.d("M3UParser", "Parsed cookie: $currentCookie")
+                    }
                     if (json.has("user-agent")) currentUa = json.optString("user-agent")
+                    if (json.has("User-Agent")) currentUa = json.optString("User-Agent")
                     if (json.has("referer")) currentReferer = json.optString("referer")
-                } catch (e: Exception) { }
+                } catch (e: Exception) {
+                    Log.e("M3UParser", "Error parsing EXTHTTP", e)
+                }
             }
             // Parse KODIPROP (DRM info)
             else if (trim.startsWith("#KODIPROP:")) {
