@@ -170,21 +170,42 @@ class PlayerFragment : Fragment() {
     }
 
     private fun buildMediaItem(channel: Channel): MediaItem {
-        // Check if DRM is needed
-        val hasDrm = !channel.drmLicenseUrl.isNullOrEmpty() && !channel.drmKey.isNullOrEmpty()
+        // Check if DRM is needed (clearkey)
+        val hasDrm = channel.drmKey != null && channel.drmKey!!.contains(":")
         
         return if (hasDrm) {
-            // Build DRM configuration for ClearKey
-            // ClearKey UUID: e2719d58-e985-11e3-ac10-0800200c9a66
-            val clearKeyUuid = java.util.UUID.fromString("e2719d58-e985-11e3-ac10-0800200c9a66")
-            val drmConfiguration = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
-                .setLicenseUri(channel.drmLicenseUrl!!)
-                .build()
-            
-            MediaItem.Builder()
-                .setUri(channel.url)
-                .setDrmConfiguration(drmConfiguration)
-                .build()
+            try {
+                // Parse ClearKey: format is key1:key2 (kid:key)
+                val keys = channel.drmKey!!.split(":")
+                if (keys.size >= 2) {
+                    val kid = keys[0].trim()
+                    val key = keys[1].trim()
+                    
+                    // Build JSON for ClearKey
+                    val clearKeyJson = """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""
+                    
+                    // ClearKey UUID: e2719d58-e985-11e3-ac10-0800200c9a66
+                    val clearKeyUuid = java.util.UUID.fromString("e2719d58-e985-11e3-ac10-0800200c9a66")
+                    
+                    val drmConfiguration = MediaItem.DrmConfiguration.Builder(clearKeyUuid)
+                        .setLicenseRequestHeaders(
+                            mapOf(
+                                "Content-Type" to "application/json",
+                                "ClearKey" to clearKeyJson
+                            )
+                        )
+                        .build()
+                    
+                    MediaItem.Builder()
+                        .setUri(channel.url)
+                        .setDrmConfiguration(drmConfiguration)
+                        .build()
+                } else {
+                    MediaItem.fromUri(channel.url)
+                }
+            } catch (e: Exception) {
+                MediaItem.fromUri(channel.url)
+            }
         } else {
             MediaItem.fromUri(channel.url)
         }

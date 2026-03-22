@@ -4,7 +4,8 @@ import com.streamvision.iptv.domain.model.Channel
 
 /**
  * M3U/M3U8 Playlist Parser
- * Parses standard M3U playlists with extended information
+ * Parses M3U playlists with extended information
+ * Supports standard M3U and JioTV/Bee IPS-style playlists
  */
 object M3UParser {
 
@@ -16,53 +17,74 @@ object M3UParser {
         val lines = content.lines()
         
         var i = 0
+        var pendingDrmLicenseType: String? = null
+        var pendingDrmKeys: String? = null
+        var pendingHttpHeaders: String? = null
+        
         while (i < lines.size) {
             val line = lines[i].trim()
+            
+            // Check for KODIPROP (DRM info) - comes before the EXTINF or URL
+            if (line.startsWith("#KODIPROP:")) {
+                val prop = line.removePrefix("#KODIPROP:")
+                when {
+                    prop.contains("license_type") -> {
+                        pendingDrmLicenseType = prop.substringAfter("=").trim()
+                    }
+                    prop.contains("license_key") -> {
+                        pendingDrmKeys = prop.substringAfter("=").trim()
+                    }
+                }
+                i++
+                continue
+            }
+            
+            // Check for EXTHTTP (HTTP headers/cookies)
+            if (line.startsWith("#EXTHTTP:")) {
+                pendingHttpHeaders = line.removePrefix("#EXTHTTP:").trim()
+                i++
+                continue
+            }
             
             // Check for EXTINF line (channel metadata)
             if (line.startsWith("#EXTINF:")) {
                 val metadata = parseExtInfLine(line)
                 
-                // Get channel name - priority: explicit name > tvg-name > display-name
+                // Get channel name - priority: explicit name > tvg-name
                 var name = metadata["name"] ?: ""
                 if (name.isBlank()) {
                     name = metadata["tvg_name"] ?: ""
                 }
-                if (name.isBlank()) {
-                    name = metadata["display_name"] ?: ""
-                }
-                
-                // Get DRM information
-                val drmLicenseUrl = metadata["license_url"] ?: metadata["drm_license_url"] ?: ""
-                val drmKeys = metadata["keys"] ?: metadata["drm_keys"] ?: ""
                 
                 // Next line should be the URL
                 if (i + 1 < lines.size) {
                     val urlLine = lines[i + 1].trim()
                     if (urlLine.isNotEmpty() && !urlLine.startsWith("#")) {
+                        // Check if DRM is needed (clearkey)
+                        val drmLicenseUrl = if (pendingDrmLicenseType == "clearkey") {
+                            // For ClearKey, we need to construct the license URL
+                            // The keys format is key1:key2 - we'll store it in drmKey
+                            pendingDrmKeys
+                        } else null
+                        
                         val channel = Channel(
                             name = name.ifBlank { "Unknown Channel" },
                             url = urlLine,
                             logo = metadata["tvg_logo"] ?: metadata["logo"],
                             group = metadata["group_title"] ?: metadata["group"],
                             playlistId = playlistId,
-                            drmLicenseUrl = drmLicenseUrl.ifBlank { null },
-                            drmKey = drmKeys.ifBlank { null }
+                            drmLicenseUrl = drmLicenseUrl,
+                            drmKey = if (pendingDrmLicenseType == "clearkey") pendingDrmKeys else null
                         )
                         channels.add(channel)
+                        
+                        // Reset DRM info after use
+                        pendingDrmLicenseType = null
+                        pendingDrmKeys = null
+                        pendingHttpHeaders = null
                         i++ // Skip the URL line
                     }
                 }
-            } else if (line.startsWith("#EXTGRP:")) {
-                // Extended group information - skip
-            } else if (line.isNotEmpty() && !line.startsWith("#")) {
-                // Direct URL without EXTINF (simple M3U)
-                val channel = Channel(
-                    name = extractNameFromUrl(line),
-                    url = line,
-                    playlistId = playlistId
-                )
-                channels.add(channel)
             }
             i++
         }
@@ -71,11 +93,8 @@ object M3UParser {
     }
 
     /**
-     * Parse #EXTINF line and extract all metadata
-     * Handles formats like:
-     * #EXTINF:-1 tvg-name="Name" tvg-logo="..." group-title="Group",Channel Name
-     * #EXTINF:-1,[tvg-name="Name" tvg-logo="..."]Channel Name
-     * #EXTINF:0 group-title="Group",Channel Name
+     * Parse #EXTINF line
+     * Format: #EXTINF:-1[="Dummy"] tvg-id="..." group-title="..." tvg-logo="...",Channel Name
      */
     private fun parseExtInfLine(line: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
@@ -83,130 +102,61 @@ object M3UParser {
         // Remove #EXTINF: prefix
         val extInfContent = line.removePrefix("#EXTINF:")
         
-        // Find the first comma that separates duration from the rest
+        // Find the first comma
         val firstComma = extInfContent.indexOf(',')
         
         if (firstComma < 0) {
-            // No comma - just attributes, no channel name
+            // No comma - just attributes
             val attrs = parseAllAttributes(extInfContent.trim())
             result.putAll(attrs)
             return result
         }
         
-        // Get the part before the first comma (duration + attributes)
+        // Get the part before comma (duration + attributes)
         val beforeComma = extInfContent.substring(0, firstComma).trim()
-        // Get the part after the first comma (channel name or more attributes)
-        var afterComma = extInfContent.substring(firstComma + 1).trim()
-        
-        result["duration"] = beforeComma
+        // Get the part after comma (channel name)
+        val afterComma = extInfContent.substring(firstComma + 1).trim()
         
         // Parse attributes from before comma
-        val beforeAttrs = parseAllAttributes(beforeComma)
-        result.putAll(beforeAttrs)
+        val attrs = parseAllAttributes(beforeComma)
+        result.putAll(attrs)
         
-        // Now handle the after comma part
-        // It could be: just channel name, or [attributes]channel name, or more attributes
-        
-        // First check if there's a bracket with attributes
-        val bracketMatch = Regex("""^\[([^\]]+)\](.*)$""").find(afterComma)
-        
-        if (bracketMatch != null) {
-            // Found bracket with attributes
-            val bracketContent = bracketMatch.groupValues[1]
-            val afterBracket = bracketMatch.groupValues[2].trim()
-            
-            // Parse attributes from bracket
-            val bracketAttrs = parseAllAttributes(bracketContent)
-            result.putAll(bracketAttrs)
-            
-            // Channel name is after the bracket
-            if (afterBracket.isNotBlank()) {
-                result["name"] = afterBracket
-            }
-        } else if (afterComma.startsWith("\"")) {
-            // The after comma part starts with quote - it's a quoted channel name
-            // Find the closing quote
-            val endQuote = afterComma.indexOf("\"", 1)
-            if (endQuote > 0) {
-                result["name"] = afterComma.substring(1, endQuote)
-            } else {
-                result["name"] = afterComma
-            }
-        } else {
-            // No bracket - check if afterComma has more attributes or is just the name
-            // Check if it looks like attributes (has =")
-            if (afterComma.contains("=")) {
-                // More attributes in after comma
-                val afterAttrs = parseAllAttributes(afterComma)
-                // Check if there's a channel name in the after comma
-                // It's usually after all the attributes
-                val nameMatch = Regex("""(.+?)\s*=\s*["'].+$""").find(afterComma)
-                if (nameMatch != null) {
-                    // Get everything before the first attribute-like pattern
-                    val nameCandidate = afterComma.substringBefore("=").trim()
-                    if (nameCandidate.isNotBlank() && !nameCandidate.contains("[")) {
-                        result["name"] = nameCandidate
-                    }
-                }
-                result.putAll(afterAttrs)
-            } else {
-                // Just channel name
-                result["name"] = afterComma
-            }
+        // Channel name is after the comma
+        if (afterComma.isNotBlank()) {
+            result["name"] = afterComma
         }
         
         return result
     }
 
     /**
-     * Parse all attributes from a string - handles both key="value" and key='value'
+     * Parse all attributes from a string
+     * Handles: key="value" or key='value'
+     * Also handles: ="value" (like ="Dummy")
      */
     private fun parseAllAttributes(attrString: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
         
-        // Match key="value" or key='value'
-        val regex = Regex("""([a-zA-Z0-9_-]+)=["']([^"']*)["']""")
+        // Match key="value" or key='value' or ="value"
+        val regex = Regex("""([a-zA-Z0-9_-]+)?=["']([^"']*)["']""")
         
         regex.findAll(attrString).forEach { match ->
-            val key = match.groupValues[1].lowercase().replace("-", "_")
+            val key = (match.groupValues[1].ifEmpty { "dummy" }).lowercase().replace("-", "_")
             val value = match.groupValues[2]
             
             when (key) {
+                "dummy" -> { /* Skip ="Dummy" */ }
                 "tvg_name" -> result["tvg_name"] = value
+                "tvg_id" -> result["tvg_id"] = value
                 "tvg_logo" -> result["tvg_logo"] = value
                 "logo" -> result["logo"] = value
                 "group_title" -> result["group_title"] = value
                 "group" -> result["group"] = value
-                "tvg_id" -> result["tvg_id"] = value
-                "display_name" -> result["display_name"] = value
-                "license_url" -> result["license_url"] = value
-                "drm_license_url" -> result["drm_license_url"] = value
-                "keys" -> result["keys"] = value
-                "drm_keys" -> result["drm_keys"] = value
+                "group_logo" -> result["group_logo"] = value
             }
         }
         
         return result
-    }
-
-    /**
-     * Extract a readable name from URL
-     */
-    private fun extractNameFromUrl(url: String): String {
-        return try {
-            val path = url.substringAfter("://").substringBefore("?")
-            val fileName = path.substringAfterLast("/").substringBeforeLast(".")
-            if (fileName.isNotEmpty()) {
-                fileName.replace("_", " ").replace("-", " ")
-                    .split(" ").joinToString(" ") { word ->
-                        word.replaceFirstChar { it.uppercase() }
-                    }
-            } else {
-                "Unknown Channel"
-            }
-        } catch (e: Exception) {
-            "Unknown Channel"
-        }
     }
 
     /**
