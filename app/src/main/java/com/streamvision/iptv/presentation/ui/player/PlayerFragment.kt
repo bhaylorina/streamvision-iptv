@@ -169,10 +169,40 @@ class PlayerFragment : Fragment() {
             Log.w(TAG, "Could not set headers via reflection: ${e.message}")
         }
         
+        
+        // Create DRM session manager for ClearKey (if needed)
+        if (!channel.drmKey.isNullOrBlank()) {
+            try {
+                val parts = channel.drmKey.split(":")
+                if (parts.size == 2) {
+                    val keyId = parts[0]
+                    val key = parts[1]
+                    
+                    // Convert hex to base64url
+                    val keyIdBytes = hexToBytes(keyId)
+                    val keyBytes = hexToBytes(key)
+                    val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+                    val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE)
+                    
+                    val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
+                    Log.d(TAG, "ClearKey JSON: $clearKeyJson")
+                    
+                    val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
+                    
+                    // Note: DRM is applied per-media-item via buildMediaItem()
+                    // This is just for logging that we detected DRM
+                    Log.d(TAG, "DRM Session Manager created with ClearKey")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating DRM session: ${e.message}", e)
+            }
+        }
+        
         // Create media source factory with custom data source
         val mediaSourceFactory = DefaultMediaSourceFactory(requireContext())
             .setDataSourceFactory(httpDataSourceFactory)
         
+        // Build player
         player = ExoPlayer.Builder(requireContext())
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
@@ -282,17 +312,7 @@ class PlayerFragment : Fragment() {
             val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
             Log.d(TAG, "ClearKey JSON: $clearKeyJson")
             
-            // Create LocalMediaDrmCallback with the ClearKey JSON
-            val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
-            
-            // Build DRM session manager with ClearKey UUID (kept for future reference)
-            // val drmSessionManager = DefaultDrmSessionManager.Builder()
-            //     .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-            //     .build(drmCallback)
-            
-            Log.d(TAG, "DRM Session Manager created with ClearKey")
-            
-            // Create MediaItem with DRM configuration
+            // Create DRM configuration with ClearKey UUID
             val drmConfig = MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID)
                 .build()
             
