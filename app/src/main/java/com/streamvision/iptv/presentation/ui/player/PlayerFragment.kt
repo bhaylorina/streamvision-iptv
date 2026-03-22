@@ -27,11 +27,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.DrmSessionManager
+import androidx.media3.exoplayer.drm.ExoMediaDrm
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.MediaDrmCallback
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MediaSourceFactory
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
@@ -175,25 +175,16 @@ class PlayerFragment : Fragment() {
         
         // Prepare DRM callback for ClearKey if needed
         drmCallbackHolder = null
+        var clearKeyCallback: MediaDrmCallback? = null
+        
         if (!channel.drmKey.isNullOrBlank()) {
             try {
                 val parts = channel.drmKey.split(":")
                 if (parts.size == 2) {
-                    val keyId = parts[0]
-                    val key = parts[1]
-                    
-                    // Convert hex to standard base64
-                    val keyIdBytes = hexToBytes(keyId)
-                    val keyBytes = hexToBytes(key)
-                    val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
-                    val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
-                    
-                    val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
-                    Log.d(TAG, "ClearKey JSON: $clearKeyJson")
-                    
-                    // Create the callback that will provide keys
-                    drmCallbackHolder = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
-                    Log.d(TAG, "Created LocalMediaDrmCallback for ClearKey")
+                    // Use custom callback like user's code
+                    clearKeyCallback = LocalClearKeyCallback(parts[0], parts[1])
+                    drmCallbackHolder = LocalMediaDrmCallback("""{"keys":[{"kty":"oct","k":"test","kid":"test"}]}""".toByteArray())
+                    Log.d(TAG, "Created LocalClearKeyCallback for ClearKey")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error creating DRM callback: ${e.message}", e)
@@ -204,7 +195,18 @@ class PlayerFragment : Fragment() {
         val mediaSourceFactory = DefaultMediaSourceFactory(requireContext())
             .setDataSourceFactory(httpDataSourceFactory)
         
-        // Build player
+        // If we have DRM, set the session manager provider
+        if (clearKeyCallback != null) {
+            val callback = clearKeyCallback
+            mediaSourceFactory.setDrmSessionManagerProvider {
+                Log.d(TAG, "Creating DRM session manager from provider")
+                DefaultDrmSessionManager.Builder()
+                    .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                    .setMultiSession(true)
+                    .build(callback)
+            }
+        }
+        
         player = ExoPlayer.Builder(requireContext())
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
@@ -301,36 +303,53 @@ class PlayerFragment : Fragment() {
             val keyId = parts[0]
             val key = parts[1]
             
-            Log.d(TAG, "KeyId: $keyId")
-            Log.d(TAG, "Key: $key")
+            Log.d(TAG, "KeyId: $keyId, Key: $key")
             
-            // Convert hex to standard base64 (NO_WRAP)
-            val keyIdBytes = hexToBytes(keyId)
-            val keyBytes = hexToBytes(key)
-            val keyIdBase64 = Base64.encodeToString(keyIdBytes, Base64.NO_WRAP)
-            val keyBase64 = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
+            // Format key using the same method as user's working code
+            val formattedKid = formatKey(keyId)
+            val formattedKey = formatKey(key)
             
-            // Build ClearKey JSON (EME format)
-            val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}]}"""
-            val keySetId = clearKeyJson.toByteArray(Charsets.UTF_8)
-            Log.d(TAG, "ClearKey JSON: $clearKeyJson")
+            val json = """{"keys":[{"kty":"oct","k":"$formattedKey","kid":"$formattedKid"}],"type":"temporary"}"""
+            Log.d(TAG, "ClearKey JSON: $json")
             
-            // Use C.CLEARKEY_UUID and setKeySetId
-            val drmConfiguration = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                .setKeySetId(keySetId)
+            // Create callback like user's code
+            val callback = LocalClearKeyCallback(keyId, key)
+            
+            // Build DRM session manager with callback
+            val drmSessionManager = DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                .setMultiSession(true)
+                .build(callback)
+            
+            // Build DRM configuration
+            val drmConfig = MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
                 .build()
-            
-            Log.d(TAG, "Created DrmConfiguration with C.CLEARKEY_UUID and keySetId")
             
             return MediaItem.Builder()
                 .setUri(url)
-                .setDrmConfiguration(drmConfiguration)
+                .setDrmConfiguration(drmConfig)
                 .build()
             
         } catch (e: Exception) {
             Log.e(TAG, "Error building DRM MediaItem: ${e.message}", e)
             return MediaItem.fromUri(url)
         }
+    }
+    
+    private fun formatKey(str: String): String {
+        val cleanStr = str.replace("-", "").trim()
+        if (cleanStr.length == 32) {
+            try {
+                val bArr = ByteArray(16)
+                for (i in 0 until 32 step 2) {
+                    bArr[i / 2] = ((Character.digit(cleanStr[i], 16) shl 4) + Character.digit(cleanStr[i + 1], 16)).toByte()
+                }
+                return Base64.encodeToString(bArr, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error formatting key: ${e.message}")
+            }
+        }
+        return cleanStr
     }
     
     private fun hexToBytes(hex: String): ByteArray {
@@ -342,6 +361,41 @@ class PlayerFragment : Fragment() {
             i += 2
         }
         return data
+    }
+    
+    // Custom LocalClearKeyCallback - like user's working code
+    private inner class LocalClearKeyCallback(
+        private val keyId: String,
+        private val key: String
+    ) : MediaDrmCallback {
+        
+        override fun executeProvisionRequest(uuid: UUID, request: ExoMediaDrm.ProvisionRequest): ByteArray {
+            return ByteArray(0)
+        }
+        
+        override fun executeKeyRequest(uuid: UUID, request: ExoMediaDrm.KeyRequest): ByteArray {
+            val formattedKid = formatKey(keyId)
+            val formattedKey = formatKey(key)
+            val json = """{"keys":[{"kty":"oct","k":"$formattedKey","kid":"$formattedKid"}],"type":"temporary"}"""
+            Log.d(TAG, "LocalClearKeyCallback JSON: $json")
+            return json.toByteArray(Charsets.UTF_8)
+        }
+        
+        private fun formatKey(str: String): String {
+            val cleanStr = str.replace("-", "").trim()
+            if (cleanStr.length == 32) {
+                try {
+                    val bArr = ByteArray(16)
+                    for (i in 0 until 32 step 2) {
+                        bArr[i / 2] = ((Character.digit(cleanStr[i], 16) shl 4) + Character.digit(cleanStr[i + 1], 16)).toByte()
+                    }
+                    return Base64.encodeToString(bArr, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error formatting key: ${e.message}")
+                }
+            }
+            return cleanStr
+        }
     }
     
     private fun showError(message: String) {

@@ -63,12 +63,12 @@ dependencies {
     implementation("androidx.navigation:navigation-fragment-ktx:2.7.6")
     implementation("androidx.navigation:navigation-ui-ktx:2.7.6")
 
-    // Media3 (ExoPlayer) 1.9.1
-    implementation("androidx.media3:media3-exoplayer:1.9.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.9.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.9.1")
-    implementation("androidx.media3:media3-ui:1.9.1")
-    implementation("androidx.media3:media3-session:1.9.1")
+    // Media3 (ExoPlayer) 1.4.0 - better ClearKey support
+    implementation("androidx.media3:media3-exoplayer:1.4.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.4.0")
+    implementation("androidx.media3:media3-ui:1.4.0")
+    implementation("androidx.media3:media3-session:1.4.0")
 
     // Hilt
     implementation("com.google.dagger:hilt-android:2.50")
