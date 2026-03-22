@@ -173,14 +173,27 @@ class PlayerFragment : Fragment() {
         Log.d(TAG, "Name: ${channel.name}")
         Log.d(TAG, "URL: ${channel.url}")
         Log.d(TAG, "Cookie: ${channel.cookie}")
-        Log.d(TAG, "UserAgent: ${channel.userAgent}")
-        Log.d(TAG, "Referer: ${channel.referer}")
         
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        // Build media item - for now simple
-        val mediaItem = MediaItem.fromUri(channel.url)
+        // Build media item with cookie header
+        val mediaItem = if (!channel.cookie.isNullOrBlank()) {
+            Log.d(TAG, ">>> Building media item WITH cookie <<<")
+            
+            // For DASH streams, we need to pass the cookie as part of the URL or use custom data source
+            // Try adding cookie to URL as query parameter (some servers accept this)
+            val urlWithCookie = if (channel.url.contains("?")) {
+                "${channel.url}&Cookie=${channel.cookie}"
+            } else {
+                "${channel.url}?Cookie=${channel.cookie}"
+            }
+            
+            Log.d(TAG, "URL with cookie: ${urlWithCookie.take(100)}...")
+            MediaItem.fromUri(urlWithCookie)
+        } else {
+            MediaItem.fromUri(channel.url)
+        }
         
         player?.apply {
             setMediaItem(mediaItem)
