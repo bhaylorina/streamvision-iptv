@@ -20,8 +20,11 @@ import com.google.android.material.textfield.TextInputEditText
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.domain.model.Channel
+import com.streamvision.iptv.domain.model.Playlist
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
+import com.streamvision.iptv.presentation.adapter.PlaylistAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
+import com.streamvision.iptv.presentation.viewmodel.SettingsViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -32,7 +35,11 @@ class ChannelsFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: ChannelsViewModel by activityViewModels()
+    private val settingsViewModel: SettingsViewModel by viewModels()
     private lateinit var channelAdapter: ChannelAdapter
+    private lateinit var playlistAdapter: PlaylistAdapter
+
+    private var showingPlaylists = true
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -45,14 +52,15 @@ class ChannelsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        setupRecyclerView()
+        setupRecyclerViews()
         setupSearch()
         setupChips()
         setupClickListeners()
         observeState()
+        showPlaylists()
     }
 
-    private fun setupRecyclerView() {
+    private fun setupRecyclerViews() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel -> navigateToPlayer(channel) },
             onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) }
@@ -60,6 +68,17 @@ class ChannelsFragment : Fragment() {
         binding.rvChannels.apply {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = channelAdapter
+        }
+
+        playlistAdapter = PlaylistAdapter(
+            onPlaylistClick = { playlist -> onPlaylistSelected(playlist) },
+            onDeleteClick = { playlist ->
+                showDeleteConfirmation(playlist.id, playlist.name)
+            }
+        )
+        binding.rvPlaylists.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = playlistAdapter
         }
     }
 
@@ -82,10 +101,16 @@ class ChannelsFragment : Fragment() {
         binding.btnAddFirstPlaylist.setOnClickListener {
             showAddPlaylistDialog()
         }
+        binding.btnBackToPlaylists.setOnClickListener {
+            showPlaylists()
+        }
         binding.swipeRefresh.setOnRefreshListener {
-            // Refresh current playlist
-            viewModel.uiState.value.currentPlaylist?.let { playlist ->
-                viewModel.loadChannels(playlist.id)
+            if (showingPlaylists) {
+                settingsViewModel.loadPlaylists()
+            } else {
+                viewModel.uiState.value.currentPlaylist?.let { playlist ->
+                    viewModel.loadChannels(playlist.id)
+                }
             }
             binding.swipeRefresh.isRefreshing = false
         }
@@ -100,12 +125,12 @@ class ChannelsFragment : Fragment() {
                     channelAdapter.submitList(state.filteredChannels)
 
                     // Update playlist name
-                    binding.tvPlaylistName.text = state.currentPlaylist?.name ?: getString(R.string.channels)
+                    binding.tvPlaylistName.text = state.currentPlaylist?.name ?: getString(R.string.playlists)
 
                     // Update empty state
-                    val showEmpty = state.filteredChannels.isEmpty() && !state.isLoading
+                    val showEmpty = state.filteredChannels.isEmpty() && !state.isLoading && !showingPlaylists
                     binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
-                    binding.rvChannels.visibility = if (showEmpty) View.GONE else View.VISIBLE
+                    binding.rvChannels.visibility = if (showEmpty || showingPlaylists) View.GONE else View.VISIBLE
 
                     // Update group chips
                     updateGroupChips(state.groups, state.selectedGroup)
@@ -118,10 +143,49 @@ class ChannelsFragment : Fragment() {
                 }
             }
         }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                settingsViewModel.uiState.collect { state ->
+                    playlistAdapter.submitList(state.playlists)
+                    binding.tvNoPlaylists.visibility = if (state.playlists.isEmpty()) View.VISIBLE else View.GONE
+                }
+            }
+        }
+    }
+
+    private fun showPlaylists() {
+        showingPlaylists = true
+        binding.rvPlaylists.visibility = View.VISIBLE
+        binding.rvChannels.visibility = View.GONE
+        binding.chipGroup.visibility = View.GONE
+        binding.etSearch.visibility = View.GONE
+        binding.btnBackToPlaylists.visibility = View.GONE
+        binding.tvPlaylistName.text = getString(R.string.playlists)
+    }
+
+    private fun onPlaylistSelected(playlist: Playlist) {
+        showingPlaylists = false
+        binding.rvPlaylists.visibility = View.GONE
+        binding.rvChannels.visibility = View.VISIBLE
+        binding.chipGroup.visibility = View.VISIBLE
+        binding.etSearch.visibility = View.VISIBLE
+        binding.btnBackToPlaylists.visibility = View.VISIBLE
+        viewModel.loadChannels(playlist.id)
+    }
+
+    private fun showDeleteConfirmation(playlistId: Long, playlistName: String) {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.remove)
+            .setMessage("Remove playlist \"$playlistName\"?")
+            .setPositiveButton(R.string.remove) { _, _ ->
+                settingsViewModel.deletePlaylist(playlistId)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
-        // Remove old group chips (keep the "All" chip)
         val chipGroup = binding.chipGroup
         val childCount = chipGroup.childCount
         if (childCount > 1) {
@@ -130,7 +194,6 @@ class ChannelsFragment : Fragment() {
             }
         }
 
-        // Add group chips
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
                 text = group

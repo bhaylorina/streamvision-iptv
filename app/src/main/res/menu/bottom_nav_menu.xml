@@ -3,7 +3,7 @@
     <item
         android:id="@+id/channelsFragment"
         android:icon="@drawable/ic_channels"
-        android:title="@string/channels" />
+        android:title="@string/playlists" />
     <item
         android:id="@+id/favoritesFragment"
         android:icon="@drawable/ic_favorite_outline"
