@@ -26,9 +26,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.DrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSourceFactory
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
@@ -49,6 +51,7 @@ class PlayerFragment : Fragment() {
 
     private var player: ExoPlayer? = null
     private var currentChannel: Channel? = null
+    private var drmCallbackHolder: LocalMediaDrmCallback? = null
 
     companion object {
         // ClearKey UUID - standard for ClearKey DRM
@@ -169,8 +172,8 @@ class PlayerFragment : Fragment() {
             Log.w(TAG, "Could not set headers via reflection: ${e.message}")
         }
         
-        
-        // Create DRM session manager for ClearKey (if needed)
+        // Prepare DRM callback for ClearKey if needed
+        drmCallbackHolder = null
         if (!channel.drmKey.isNullOrBlank()) {
             try {
                 val parts = channel.drmKey.split(":")
@@ -187,14 +190,12 @@ class PlayerFragment : Fragment() {
                     val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
                     Log.d(TAG, "ClearKey JSON: $clearKeyJson")
                     
-                    val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
-                    
-                    // Note: DRM is applied per-media-item via buildMediaItem()
-                    // This is just for logging that we detected DRM
-                    Log.d(TAG, "DRM Session Manager created with ClearKey")
+                    // Create the callback that will provide keys
+                    drmCallbackHolder = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
+                    Log.d(TAG, "Created LocalMediaDrmCallback for ClearKey")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error creating DRM session: ${e.message}", e)
+                Log.e(TAG, "Error creating DRM callback: ${e.message}", e)
             }
         }
         
@@ -312,14 +313,28 @@ class PlayerFragment : Fragment() {
             val clearKeyJson = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$keyIdBase64"}],"type":"temporary"}"""
             Log.d(TAG, "ClearKey JSON: $clearKeyJson")
             
-            // Create DRM configuration with ClearKey UUID
+            // Create DRM callback
+            val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
+            
+            // Build DRM session manager with ClearKey UUID and callback
+            val drmSessionManager = DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                .build(drmCallback)
+            
+            Log.d(TAG, "Created DefaultDrmSessionManager with ClearKey")
+            
+            // Create DRM configuration with ClearKey UUID and license URL
+            // Note: Even for ClearKey, we need to provide a license URI
             val drmConfig = MediaItem.DrmConfiguration.Builder(CLEARKEY_UUID)
+                .setLicenseUri("https://cwip-shaka-proxy.appspot.com/no_license")
                 .build()
             
-            return MediaItem.Builder()
+            // Use MediaItem.Builder with setDrmSessionManager if available
+            val builder = MediaItem.Builder()
                 .setUri(url)
                 .setDrmConfiguration(drmConfig)
-                .build()
+            
+            return builder.build()
             
         } catch (e: Exception) {
             Log.e(TAG, "Error building DRM MediaItem: ${e.message}", e)
