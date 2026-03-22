@@ -24,7 +24,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
-import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
@@ -61,7 +60,6 @@ class PlayerFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         
         hideSystemUI()
-        setupPlayer()
         setupClickListeners()
         observeState()
         
@@ -79,7 +77,59 @@ class PlayerFragment : Fragment() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun setupPlayer(headers: Map<String, String> = emptyMap()) {
+    private fun setupClickListeners() {
+        binding.btnRetry.setOnClickListener {
+            viewModel.uiState.value.currentChannel?.let { channel ->
+                playChannel(channel)
+            }
+        }
+        
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    releasePlayer()
+                    findNavController().popBackStack()
+                }
+            }
+        )
+    }
+
+    private fun observeState() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state ->
+                    state.currentChannel?.let { channel ->
+                        if (currentChannel?.id != channel.id) {
+                            currentChannel = channel
+                            Log.d(TAG, "=== Channel Info ===")
+                            Log.d(TAG, "Name: ${channel.name}")
+                            Log.d(TAG, "URL: ${channel.url}")
+                            Log.d(TAG, "Cookie: ${channel.cookie}")
+                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
+                            Log.d(TAG, "Referer: ${channel.referer}")
+                        }
+                        
+                        // Initialize player with headers
+                        if (player == null) {
+                            setupPlayer(channel)
+                        }
+                        
+                        if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
+                            playChannel(channel)
+                        }
+                        binding.tvChannelName.text = channel.name
+                    }
+                    
+                    if (state.error != null) {
+                        showError(state.error)
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun setupPlayer(channel: Channel) {
         player = ExoPlayer.Builder(requireContext())
             .build()
             .also { exoPlayer ->
@@ -118,53 +168,6 @@ class PlayerFragment : Fragment() {
             }
     }
 
-    private fun setupClickListeners() {
-        binding.btnRetry.setOnClickListener {
-            viewModel.uiState.value.currentChannel?.let { channel ->
-                playChannel(channel)
-            }
-        }
-        
-        requireActivity().onBackPressedDispatcher.addCallback(
-            viewLifecycleOwner,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    releasePlayer()
-                    findNavController().popBackStack()
-                }
-            }
-        )
-    }
-
-    private fun observeState() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { state ->
-                    state.currentChannel?.let { channel ->
-                        if (currentChannel?.id != channel.id) {
-                            currentChannel = channel
-                            Log.d(TAG, "=== Channel Info ===")
-                            Log.d(TAG, "Name: ${channel.name}")
-                            Log.d(TAG, "URL: ${channel.url}")
-                            Log.d(TAG, "Cookie: ${channel.cookie}")
-                            Log.d(TAG, "UserAgent: ${channel.userAgent}")
-                            Log.d(TAG, "Referer: ${channel.referer}")
-                        }
-                        
-                        if (player?.currentMediaItem?.localConfiguration?.uri?.toString() != channel.url) {
-                            playChannel(channel)
-                        }
-                        binding.tvChannelName.text = channel.name
-                    }
-                    
-                    if (state.error != null) {
-                        showError(state.error)
-                    }
-                }
-            }
-        }
-    }
-
     private fun playChannel(channel: Channel) {
         Log.d(TAG, "=== Playing Channel ===")
         Log.d(TAG, "Name: ${channel.name}")
@@ -174,45 +177,17 @@ class PlayerFragment : Fragment() {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
         
-        // Build media item with cookie in URL (works for most servers)
-        val mediaItem = buildMediaItemWithUrlHeaders(channel)
+        // Recreate player with new headers if needed
+        releasePlayer()
+        setupPlayer(channel)
+        
+        val mediaItem = MediaItem.fromUri(channel.url)
         
         player?.apply {
             setMediaItem(mediaItem)
             prepare()
             playWhenReady = true
         }
-    }
-    
-    /**
-     * Build MediaItem with headers embedded in URL.
-     * This works for many streaming servers.
-     */
-    private fun buildMediaItemWithUrlHeaders(channel: Channel): MediaItem {
-        var url = channel.url
-        
-        // Add headers as URL parameters
-        val params = mutableListOf<String>()
-        
-        if (!channel.cookie.isNullOrBlank()) {
-            // Encode the cookie value
-            val encodedCookie = java.net.URLEncoder.encode(channel.cookie, "UTF-8")
-            params.add("Cookie=$encodedCookie")
-            Log.d(TAG, "Added Cookie to URL: ${channel.cookie.take(30)}...")
-        }
-        
-        if (!channel.referer.isNullOrBlank()) {
-            val encodedRef = java.net.URLEncoder.encode(channel.referer, "UTF-8")
-            params.add("Referer=$encodedRef")
-        }
-        
-        if (params.isNotEmpty()) {
-            val separator = if (url.contains("?")) "&" else "?"
-            url = "$url$separator${params.joinToString("&")}"
-            Log.d(TAG, "Final URL: ${url.take(100)}...")
-        }
-        
-        return MediaItem.fromUri(url)
     }
     
     private fun showError(message: String) {
