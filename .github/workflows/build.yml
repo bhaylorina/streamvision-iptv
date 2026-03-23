@@ -21,30 +21,18 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        # ✅ Cache Maven/Gradle dependencies automatically
         cache: 'gradle'
 
-    # ✅ Gradle cache — saves ~2-3 min on every build after first run
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
         cache-read-only: false
 
-    # ✅ Make gradlew executable
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    # ✅ Use ./gradlew instead of bare gradle — uses wrapper (correct & faster)
-    # --no-daemon: CI mein daemon ki zaroorat nahi
-    # --parallel: modules parallel build hote hain
-    # --build-cache: incremental builds cache use karte hain
-    # --configuration-cache: Gradle config phase skip hoti hai repeat builds mein
     - name: Build Debug APK 🚀
-      run: ./gradlew assembleDebug
-        --no-daemon
-        --parallel
-        --build-cache
-        --configuration-cache
+      run: ./gradlew assembleDebug --no-daemon --parallel --build-cache
 
     - name: Rename APK File
       run: mv app/build/outputs/apk/debug/app-debug.apk StreamVision-App.apk
