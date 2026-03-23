@@ -1,5 +1,28 @@
-@HiltViewModel
-class ChannelsViewModel @Inject constructor(
+package com.streamvision.iptv.presentation.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.streamvision.iptv.domain.model.Channel
+import com.streamvision.iptv.domain.model.Playlist
+import com.streamvision.iptv.domain.usecase.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+
+data class ChannelsUiState(
+    val channels: List<Channel> = emptyList(),
+    val filteredChannels: List<Channel> = emptyList(),
+    val groups: List<String> = emptyList(),
+    val selectedGroup: String? = null,
+    val searchQuery: String = "",
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val currentPlaylist: Playlist? = null,
+    val playlistsLoaded: Boolean = false,
+    val hasNoPlaylists: Boolean = false
+)
+
+// ✅ @HiltViewModel हटा दिया
+class ChannelsViewModel(
     private val getChannelsUseCase: GetChannelsUseCase,
     private val getChannelGroupsUseCase: GetChannelGroupsUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
@@ -18,7 +41,6 @@ class ChannelsViewModel @Inject constructor(
 
     private fun loadPlaylists() {
         viewModelScope.launch {
-            // ✅ Flow को continuously observe करें
             getPlaylistsUseCase()
                 .onEach { playlists ->
                     _uiState.update {
@@ -33,7 +55,6 @@ class ChannelsViewModel @Inject constructor(
     }
 
     fun refreshPlaylists() {
-        // ✅ Explicit refresh के लिए
         loadPlaylists()
     }
 
