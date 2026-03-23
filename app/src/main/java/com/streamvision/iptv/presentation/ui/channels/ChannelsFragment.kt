@@ -19,6 +19,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
+import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
@@ -78,7 +79,6 @@ class ChannelsFragment : Fragment() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             
             override fun afterTextChanged(s: Editable?) {
-                // Debounce search to avoid filtering on every keystroke
                 searchJob?.cancel()
                 searchJob = viewLifecycleOwner.lifecycleScope.launch {
                     delay(300)
@@ -96,7 +96,6 @@ class ChannelsFragment : Fragment() {
 
     private fun setupButtons() {
         binding.btnBackToPlaylists.setOnClickListener {
-            // Trigger state change via ViewModel
             viewModel.clearCurrentPlaylist()
         }
         binding.btnAddPlaylist.setOnClickListener {
@@ -122,11 +121,9 @@ class ChannelsFragment : Fragment() {
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner) {
             val currentState = viewModel.uiState.value
             when {
-                // If inside a playlist, go back to playlist list
                 currentState.currentPlaylist != null -> {
                     viewModel.clearCurrentPlaylist()
                 }
-                // Otherwise, let system handle back press (exit app or previous fragment)
                 else -> {
                     isEnabled = false
                     requireActivity().onBackPressedDispatcher.onBackPressed()
@@ -145,11 +142,8 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    /**
-     * Single source of truth for UI rendering.
-     * No ViewModel actions should be called here.
-     */
-    private fun renderState(state: ChannelsViewModel.UiState) {
+    // ✅ FIXED: Changed from ChannelsViewModel.UiState to ChannelsUiState
+    private fun renderState(state: ChannelsUiState) {
         // Loading
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = state.isLoading
@@ -159,7 +153,7 @@ class ChannelsFragment : Fragment() {
 
         // --- Common Elements ---
         binding.tvPlaylistName.text = if (isShowingChannels) {
-            state.currentPlaylist.name
+            state.currentPlaylist?.name ?: getString(R.string.playlists)
         } else {
             getString(R.string.playlists)
         }
@@ -188,7 +182,6 @@ class ChannelsFragment : Fragment() {
 
         // --- Error Handling ---
         state.error?.let { error ->
-            // .toString() ensures no overload ambiguity
             Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
             viewModel.clearError()
         }
@@ -197,7 +190,6 @@ class ChannelsFragment : Fragment() {
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
         val chipGroup = binding.chipGroup
 
-        // Remove dynamic chips — keep only chip_all at index 0
         while (chipGroup.childCount > 1) {
             chipGroup.removeViewAt(1)
         }
