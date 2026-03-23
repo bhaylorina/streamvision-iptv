@@ -6,3 +6,11 @@ plugins {
     id("com.google.devtools.ksp") version "1.9.22-1.0.17" apply false
     id("androidx.navigation.safeargs.kotlin") version "2.7.6" apply false
 }
+
+// ✅ THIS WAS MISSING - Add this block
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
