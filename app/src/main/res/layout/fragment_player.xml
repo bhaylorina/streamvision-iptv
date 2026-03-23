@@ -3,17 +3,23 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/player_background">
+    android:background="@android:color/black">
 
+    <!--
+        use_controller="false"  → We draw our OWN control bar overlay below.
+        This completely removes the ExoPlayer controller container that was
+        causing the grey bar below the video.
+        resize_mode="fit" keeps aspect ratio; black side-bars are fine.
+    -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        app:controller_layout_id="@layout/exo_player_control_view"
+        android:background="@android:color/black"
         app:resize_mode="fit"
-        app:show_buffering="when_playing"
-        app:show_timeout="3000"
-        app:use_controller="true" />
+        app:show_buffering="never"
+        app:surface_type="surface_view"
+        app:use_controller="false" />
 
     <!-- Loading indicator -->
     <ProgressBar
@@ -58,24 +64,147 @@
 
     </LinearLayout>
 
-    <!-- Channel info overlay (shown when paused) -->
-    <LinearLayout
-        android:id="@+id/channel_info_overlay"
+    <!-- Channel name top-left -->
+    <TextView
+        android:id="@+id/tv_channel_name"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|start"
         android:layout_margin="16dp"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:visibility="gone">
+        android:background="#66000000"
+        android:padding="8dp"
+        android:textColor="@color/white"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/tv_channel_name"
-            android:layout_width="wrap_content"
+    <!--
+        OUR OWN control bar — a plain View anchored to the BOTTOM of the
+        FrameLayout. It overlays ON TOP of the video. No grey bar possible.
+    -->
+    <LinearLayout
+        android:id="@+id/controls_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="visible">
+
+        <!-- Seek bar -->
+        <androidx.media3.ui.DefaultTimeBar
+            android:id="@+id/exo_progress"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:layout_marginBottom="4dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="@color/text_primary"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Position -->
+            <TextView
+                android:id="@+id/exo_position"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="@color/white"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" / "
+                android:textColor="@color/white"
+                android:textSize="14sp" />
+
+            <!-- Duration -->
+            <TextView
+                android:id="@+id/exo_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="@color/white"
+                android:textSize="14sp" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+
+            <!-- Audio Track -->
+            <ImageButton
+                android:id="@+id/btn_audio_track"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Audio Track"
+                android:padding="6dp"
+                android:src="@drawable/ic_audio_track"
+                android:tint="@color/white" />
+
+            <!-- Video Quality -->
+            <ImageButton
+                android:id="@+id/btn_video_quality"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Video Quality"
+                android:padding="6dp"
+                android:src="@drawable/ic_video_quality"
+                android:tint="@color/white" />
+
+            <!-- Zoom -->
+            <ImageButton
+                android:id="@+id/btn_zoom"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Zoom"
+                android:padding="6dp"
+                android:src="@drawable/ic_zoom_fit"
+                android:tint="@color/white" />
+
+            <!-- Rewind -->
+            <ImageButton
+                android:id="@+id/btn_rewind"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Rewind"
+                android:padding="8dp"
+                android:src="@drawable/ic_rewind"
+                android:tint="@color/white" />
+
+            <!-- Play / Pause -->
+            <ImageButton
+                android:id="@+id/btn_play_pause"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Play/Pause"
+                android:padding="8dp"
+                android:src="@drawable/ic_pause"
+                android:tint="@color/white" />
+
+            <!-- Fast Forward -->
+            <ImageButton
+                android:id="@+id/btn_fast_forward"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Fast Forward"
+                android:padding="8dp"
+                android:src="@drawable/ic_fast_forward"
+                android:tint="@color/white" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

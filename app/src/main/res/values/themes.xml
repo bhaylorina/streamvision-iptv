@@ -6,19 +6,21 @@
         <item name="colorSecondary">@color/secondary_accent</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="colorOnSecondary">@color/black</item>
-        
+
         <item name="android:colorBackground">@color/primary_background</item>
         <item name="colorSurface">@color/surface</item>
         <item name="colorSurfaceVariant">@color/surface_variant</item>
-        
+
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
         <item name="android:textColorTertiary">@color/text_tertiary</item>
-        
+
         <item name="android:statusBarColor">@color/primary_background</item>
-        <item name="android:navigationBarColor">@color/surface</item>
+        <!-- FIXED: was @color/surface which caused the grey bar in the player -->
+        <item name="android:navigationBarColor">@android:color/black</item>
         <item name="android:windowBackground">@color/primary_background</item>
-        
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+
         <item name="bottomNavigationStyle">@style/Widget.StreamVision.BottomNavigation</item>
     </style>
 

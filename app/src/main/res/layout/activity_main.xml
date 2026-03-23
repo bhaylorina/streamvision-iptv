@@ -5,12 +5,18 @@
     android:layout_height="match_parent"
     android:background="@color/primary_background">
 
+    <!--
+        FIX: Removed android:layout_marginBottom="56dp"
+        The bottom margin was always reserving 56dp space even when
+        bottomNavigation was GONE — causing the grey bar in the player.
+        We now set the margin dynamically in MainActivity based on
+        whether we are in the player or not.
+    -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/nav_host_fragment"
         android:name="androidx.navigation.fragment.NavHostFragment"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_marginBottom="56dp"
         app:defaultNavHost="true"
         app:navGraph="@navigation/nav_graph" />
 

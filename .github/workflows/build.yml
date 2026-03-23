@@ -1,0 +1,43 @@
+name: Build Direct APK
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+
+    - name: Set up Java (JDK 17)
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 🛠️ THE ULTIMATE SURGERY: AI ke wrapper ko chhod kar official Gradle 8.4 install karo
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.4'
+
+    # 🚀 Notice kijiye: Yahan hum './gradlew' nahi, direct 'gradle' use kar rahe hain!
+    - name: Build Debug APK 🚀
+      run: gradle assembleDebug
+
+    - name: Rename APK File
+      run: mv app/build/outputs/apk/debug/app-debug.apk StreamVision-App.apk
+
+    - name: Upload Direct APK 🎁
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "Auto-Build-${{ github.run_number }}"
+        name: "Latest StreamVision Build"
+        files: StreamVision-App.apk
