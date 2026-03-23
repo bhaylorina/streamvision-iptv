@@ -16,10 +16,15 @@ data class ChannelsUiState(
     val groups: List<String> = emptyList(),
     val selectedGroup: String? = null,
     val searchQuery: String = "",
-    val isShowingChannels: Boolean = false, // ✅ Fixed: val + comma (was var, missing comma)
+    val isShowingChannels: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val currentPlaylist: Playlist? = null
+    val currentPlaylist: Playlist? = null,
+    // ✅ Tracks whether playlist list has been fetched at least once
+    // Prevents empty-state flashing before first load
+    val playlistsLoaded: Boolean = false,
+    // ✅ Tracks if there are zero playlists in the database
+    val hasNoPlaylists: Boolean = false
 )
 
 @HiltViewModel
@@ -49,7 +54,13 @@ class ChannelsViewModel @Inject constructor(
                 if (playlists.isNotEmpty() && currentPlaylistId == null) {
                     loadChannels(playlists.first().id)
                 }
-                _uiState.update { it.copy(currentPlaylist = playlists.firstOrNull()) }
+                _uiState.update {
+                    it.copy(
+                        currentPlaylist = playlists.firstOrNull(),
+                        playlistsLoaded = true,
+                        hasNoPlaylists = playlists.isEmpty()
+                    )
+                }
             }
         }
     }
@@ -130,14 +141,13 @@ class ChannelsViewModel @Inject constructor(
         }
     }
 
-    // ✅ ADDED: Called when user opens the player — marks that we came from channel list
+    // ✅ Called when user taps a channel — sets isShowingChannels so back press works
     fun onChannelSelected(channelId: Long) {
         updateLastWatched(channelId)
         _uiState.update { it.copy(isShowingChannels = true) }
     }
 
-    // ✅ ADDED: Called when back is pressed from player — returns to channel list
-    // This was causing "Unresolved reference: clearCurrentPlaylist" build error
+    // ✅ Called when back is pressed from player, or going back to playlist view
     fun clearCurrentPlaylist() {
         _uiState.update { it.copy(isShowingChannels = false) }
     }
