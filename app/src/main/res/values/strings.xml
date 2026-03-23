@@ -31,4 +31,8 @@
     <string name="clear_history">Clear History</string>
     <string name="about">About</string>
     <string name="version">Version</string>
+
+    <!-- Added: required by AddPlaylistDialog -->
+    <string name="error_name_required">Name is required</string>
+    <string name="error_url_required">URL is required</string>
 </resources>
