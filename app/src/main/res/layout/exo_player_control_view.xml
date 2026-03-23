@@ -48,6 +48,42 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
+        <!-- ── Audio Track button ── -->
+        <ImageButton
+            android:id="@+id/btn_audio_track"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Audio Track"
+            android:padding="6dp"
+            android:src="@drawable/ic_audio_track"
+            android:tint="@color/white" />
+
+        <!-- ── Video Quality button ── -->
+        <ImageButton
+            android:id="@+id/btn_video_quality"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Video Quality"
+            android:padding="6dp"
+            android:src="@drawable/ic_video_quality"
+            android:tint="@color/white" />
+
+        <!-- ── Zoom / Resize button ── -->
+        <ImageButton
+            android:id="@+id/btn_zoom"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Zoom"
+            android:padding="6dp"
+            android:src="@drawable/ic_zoom_fit"
+            android:tint="@color/white" />
+
         <!-- Playback controls -->
         <ImageButton
             android:id="@id/exo_rew"
