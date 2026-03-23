@@ -13,6 +13,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
@@ -64,24 +65,17 @@ class PlayerFragment : Fragment() {
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
-    // Audio
     private lateinit var audioManager: AudioManager
     private var maxVolume  = 0
     private var initVolume = 0
-
-    // Brightness
     private var initBrightness = 0f
 
-    // Gesture
     private var gestureStartY    = 0f
     private var gestureStartX    = 0f
     private var gestureType      = GestureType.NONE
     private val GESTURE_THRESHOLD = 10f
+    private val BAR_TRACK_DP     = 120
 
-    // Bar track height in px (matches 120dp in XML)
-    private val BAR_TRACK_DP = 120
-
-    // Auto-hide overlays
     private val overlayHandler = Handler(Looper.getMainLooper())
     private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
     private val hideVolume     = Runnable { binding.volumeOverlay.visibility     = View.GONE }
@@ -115,11 +109,15 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // System UI
+    // System UI + Wake Lock
     // -------------------------------------------------------------------------
 
     private fun enterPlayerMode() {
         val window = activity?.window ?: return
+
+        // ✅ Keep screen ON while player is active — prevents 30s screen timeout
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         window.statusBarColor     = Color.BLACK
         window.navigationBarColor = Color.BLACK
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -132,6 +130,10 @@ class PlayerFragment : Fragment() {
 
     private fun exitPlayerMode() {
         val window = activity?.window ?: return
+
+        // ✅ Remove keep-screen-on flag when leaving player
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowInsetsControllerCompat(window, requireView())
             .show(WindowInsetsCompat.Type.systemBars())
@@ -153,15 +155,13 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Gesture: left half = brightness, right half = volume
+    // Gestures: left = brightness, right = volume
     // -------------------------------------------------------------------------
 
     private fun setupGestures() {
         binding.playerView.setOnTouchListener { v, event ->
             val screenWidth = v.width.toFloat()
-
             when (event.actionMasked) {
-
                 MotionEvent.ACTION_DOWN -> {
                     gestureStartX  = event.x
                     gestureStartY  = event.y
@@ -170,11 +170,9 @@ class PlayerFragment : Fragment() {
                     initBrightness = getCurrentBrightness()
                     false
                 }
-
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.x - gestureStartX
                     val dy = event.y - gestureStartY
-
                     if (gestureType == GestureType.NONE) {
                         if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD)
                             return@setOnTouchListener false
@@ -183,35 +181,27 @@ class PlayerFragment : Fragment() {
                             else GestureType.VOLUME
                         } else GestureType.HORIZONTAL
                     }
-
                     when (gestureType) {
                         GestureType.BRIGHTNESS -> { handleBrightness(dy, v.height.toFloat()); true }
                         GestureType.VOLUME     -> { handleVolume(dy, v.height.toFloat());     true }
                         else                   -> false
                     }
                 }
-
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     gestureType = GestureType.NONE; false
                 }
-
                 else -> false
             }
         }
     }
 
-    // ── Brightness ────────────────────────────────────────────────────────────
-
     private fun handleBrightness(dy: Float, viewHeight: Float) {
-        val delta     = -(dy / viewHeight)
-        val newBright = (initBrightness + delta).coerceIn(0.01f, 1f)
+        val newBright = (initBrightness - (dy / viewHeight)).coerceIn(0.01f, 1f)
         setBrightness(newBright)
-
         val pct = (newBright * 100).toInt()
         setBarHeight(binding.brightnessBar, pct)
         binding.tvBrightnessPct.text         = "$pct%"
         binding.brightnessOverlay.visibility = View.VISIBLE
-
         overlayHandler.removeCallbacks(hideBrightness)
         overlayHandler.postDelayed(hideBrightness, OVERLAY_HIDE_MS)
     }
@@ -231,44 +221,33 @@ class PlayerFragment : Fragment() {
     private fun setBrightness(value: Float) {
         val window = activity?.window ?: return
         val lp     = window.attributes
-        lp.screenBrightness = value.coerceIn(0.01f, 1f)
+        lp.screenBrightness = value
         window.attributes   = lp
     }
 
-    // ── Volume ────────────────────────────────────────────────────────────────
-
     private fun handleVolume(dy: Float, viewHeight: Float) {
-        val delta  = -(dy / viewHeight) * maxVolume
-        val newVol = (initVolume + delta).toInt().coerceIn(0, maxVolume)
+        val newVol = (initVolume - (dy / viewHeight) * maxVolume).toInt().coerceIn(0, maxVolume)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-
         val pct = newVol * 100 / maxVolume
         setBarHeight(binding.volumeBar, pct)
         binding.tvVolumePct.text     = "$pct%"
         binding.ivVolumeIcon.setImageResource(
             when {
-                newVol == 0                -> R.drawable.ic_volume_mute
-                newVol < maxVolume / 2     -> R.drawable.ic_volume_down
-                else                       -> R.drawable.ic_volume_up
+                newVol == 0            -> R.drawable.ic_volume_mute
+                newVol < maxVolume / 2 -> R.drawable.ic_volume_down
+                else                   -> R.drawable.ic_volume_up
             }
         )
         binding.volumeOverlay.visibility = View.VISIBLE
-
         overlayHandler.removeCallbacks(hideVolume)
         overlayHandler.postDelayed(hideVolume, OVERLAY_HIDE_MS)
     }
 
-    // ── Bar height helper ─────────────────────────────────────────────────────
-
-    /**
-     * Sets the height of the white fill View to pct% of the 120dp track.
-     */
     private fun setBarHeight(barView: View, pct: Int) {
-        val density   = resources.displayMetrics.density
-        val trackPx   = (BAR_TRACK_DP * density).toInt()
-        val fillPx    = (trackPx * pct / 100)
-        val lp        = barView.layoutParams
-        lp.height     = fillPx
+        val density = resources.displayMetrics.density
+        val trackPx = (BAR_TRACK_DP * density).toInt()
+        val lp      = barView.layoutParams
+        lp.height   = trackPx * pct / 100
         barView.layoutParams = lp
     }
 
@@ -283,7 +262,8 @@ class PlayerFragment : Fragment() {
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    releasePlayer(); findNavController().popBackStack()
+                    releasePlayer()
+                    findNavController().popBackStack()
                 }
             }
         )
