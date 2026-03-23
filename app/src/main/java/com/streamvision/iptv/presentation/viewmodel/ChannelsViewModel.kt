@@ -16,6 +16,7 @@ data class ChannelsUiState(
     val groups: List<String> = emptyList(),
     val selectedGroup: String? = null,
     val searchQuery: String = "",
+    val isShowingChannels: Boolean = false, // ✅ Fixed: val + comma (was var, missing comma)
     val isLoading: Boolean = false,
     val error: String? = null,
     val currentPlaylist: Playlist? = null
@@ -57,10 +58,10 @@ class ChannelsViewModel @Inject constructor(
         currentPlaylistId = playlistId
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-            
+
             val playlist = getPlaylistByIdUseCase(playlistId)
             _uiState.update { it.copy(currentPlaylist = playlist) }
-            
+
             getChannelsUseCase(playlistId).collect { channels ->
                 _uiState.update { state ->
                     state.copy(
@@ -127,6 +128,18 @@ class ChannelsViewModel @Inject constructor(
                 _uiState.update { it.copy(error = e.message, isLoading = false) }
             }
         }
+    }
+
+    // ✅ ADDED: Called when user opens the player — marks that we came from channel list
+    fun onChannelSelected(channelId: Long) {
+        updateLastWatched(channelId)
+        _uiState.update { it.copy(isShowingChannels = true) }
+    }
+
+    // ✅ ADDED: Called when back is pressed from player — returns to channel list
+    // This was causing "Unresolved reference: clearCurrentPlaylist" build error
+    fun clearCurrentPlaylist() {
+        _uiState.update { it.copy(isShowingChannels = false) }
     }
 
     fun clearError() {
