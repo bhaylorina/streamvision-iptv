@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -20,6 +21,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -27,8 +30,10 @@ import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
+import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
@@ -47,6 +52,9 @@ class PlayerFragment : Fragment() {
 
     private var player: ExoPlayer? = null
     private var currentChannel: Channel? = null
+
+    // Zoom state: true = FIT (default), false = FILL
+    private var isZoomFit = true
 
     companion object {
         private const val TAG = "PlayerFragment"
@@ -71,7 +79,6 @@ class PlayerFragment : Fragment() {
 
     private fun hideSystemUI() {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-
         val window = activity?.window ?: return
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, requireView())
@@ -79,6 +86,10 @@ class PlayerFragment : Fragment() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
+
+    // -------------------------------------------------------------------------
+    // Click listeners
+    // -------------------------------------------------------------------------
 
     private fun setupClickListeners() {
         binding.btnRetry.setOnClickListener {
@@ -97,7 +108,24 @@ class PlayerFragment : Fragment() {
                 }
             }
         )
+
+        // The 3 buttons live inside the custom controller layout inside PlayerView.
+        // We must look them up via PlayerView's own view hierarchy.
+        binding.playerView.post {
+            binding.playerView.findViewById<View>(R.id.btn_audio_track)
+                ?.setOnClickListener { showAudioTrackDialog() }
+
+            binding.playerView.findViewById<View>(R.id.btn_video_quality)
+                ?.setOnClickListener { showVideoQualityDialog() }
+
+            binding.playerView.findViewById<View>(R.id.btn_zoom)
+                ?.setOnClickListener { toggleZoom() }
+        }
     }
+
+    // -------------------------------------------------------------------------
+    // State observer
+    // -------------------------------------------------------------------------
 
     private fun observeState() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -107,69 +135,49 @@ class PlayerFragment : Fragment() {
                         if (currentChannel?.id != channel.id) {
                             currentChannel = channel
                             Log.d(TAG, "New channel: ${channel.name} | URL: ${channel.url}")
-                            // Release old player and build fresh one for new channel
                             releasePlayer()
                             setupAndPlay(channel)
                         }
                         binding.tvChannelName.text = channel.name
                     }
-
-                    if (state.error != null) {
-                        showError(state.error)
-                    }
+                    if (state.error != null) showError(state.error)
                 }
             }
         }
     }
 
     // -------------------------------------------------------------------------
-    // Player setup — one clean path handles both DRM and non-DRM streams
+    // Player setup
     // -------------------------------------------------------------------------
 
     private fun setupAndPlay(channel: Channel) {
         binding.errorOverlay.visibility = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
 
-        // 1. HTTP data source with proper headers
-        val httpDataSourceFactory = buildHttpDataSourceFactory(channel)
-
-        // 2. ExoPlayer — with or without DRM session manager
+        val httpFactory = buildHttpDataSourceFactory(channel)
         val playerBuilder = ExoPlayer.Builder(requireContext())
 
         if (!channel.drmKey.isNullOrBlank()) {
-            val drmSessionManager = buildClearKeyDrmSessionManager(channel.drmKey)
-            if (drmSessionManager != null) {
-                val mediaSourceFactory = DefaultMediaSourceFactory(requireContext())
-                    .setDataSourceFactory(httpDataSourceFactory)
-                    .setDrmSessionManagerProvider { drmSessionManager }
-                playerBuilder.setMediaSourceFactory(mediaSourceFactory)
-            } else {
-                // DRM parse failed — fall back to plain factory
-                playerBuilder.setMediaSourceFactory(
-                    DefaultMediaSourceFactory(requireContext())
-                        .setDataSourceFactory(httpDataSourceFactory)
-                )
-            }
+            val drm = buildClearKeyDrmSessionManager(channel.drmKey)
+            val msf = DefaultMediaSourceFactory(requireContext())
+                .setDataSourceFactory(httpFactory)
+                .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
+            playerBuilder.setMediaSourceFactory(msf)
         } else {
             playerBuilder.setMediaSourceFactory(
-                DefaultMediaSourceFactory(requireContext())
-                    .setDataSourceFactory(httpDataSourceFactory)
+                DefaultMediaSourceFactory(requireContext()).setDataSourceFactory(httpFactory)
             )
         }
 
         player = playerBuilder.build().also { exoPlayer ->
             binding.playerView.player = exoPlayer
             exoPlayer.addListener(playerListener)
-
-            // 3. MediaItem — plain URI (DRM is handled by the session manager above)
-            val mediaItem = MediaItem.Builder()
-                .setUri(channel.url)
-                .build()
-
-            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.setMediaItem(MediaItem.Builder().setUri(channel.url).build())
             exoPlayer.prepare()
             exoPlayer.playWhenReady = true
         }
+
+        applyZoomMode() // restore zoom preference on new player
     }
 
     // -------------------------------------------------------------------------
@@ -178,111 +186,193 @@ class PlayerFragment : Fragment() {
 
     private fun buildHttpDataSourceFactory(channel: Channel): DefaultHttpDataSource.Factory {
         val headers = mutableMapOf<String, String>()
-
-        if (!channel.userAgent.isNullOrBlank()) {
-            headers["User-Agent"] = channel.userAgent
-            Log.d(TAG, "User-Agent: ${channel.userAgent}")
-        }
-        if (!channel.referer.isNullOrBlank()) {
-            headers["Referer"] = channel.referer
-            Log.d(TAG, "Referer: ${channel.referer}")
-        }
-        if (!channel.cookie.isNullOrBlank()) {
-            headers["Cookie"] = channel.cookie
-            Log.d(TAG, "Cookie: ${channel.cookie.take(40)}…")
-        }
-
+        if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
+        if (!channel.referer.isNullOrBlank())   headers["Referer"]     = channel.referer
+        if (!channel.cookie.isNullOrBlank())    headers["Cookie"]      = channel.cookie
         return DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(15_000)
-            // ✅ Correct API — no reflection needed
             .setDefaultRequestProperties(headers)
     }
 
     // -------------------------------------------------------------------------
-    // ClearKey DRM session manager
+    // ClearKey DRM
     // -------------------------------------------------------------------------
 
-    /**
-     * Builds a [DefaultDrmSessionManager] that supplies inline ClearKey JSON to
-     * ExoPlayer's DRM subsystem.
-     *
-     * Key points that were wrong before:
-     *  - [MediaItem.DrmConfiguration.setKeySetId] is for offline-licence *restoration*,
-     *    not for providing inline ClearKey material.
-     *  - ClearKey JSON must use **Base64URL** encoding (URL_SAFE | NO_PADDING),
-     *    NOT standard Base64.
-     *  - The JSON must include `"type":"temporary"`.
-     *  - The [LocalMediaDrmCallback] receives the raw JSON bytes and hands them
-     *    straight to the [FrameworkMediaDrm] — this is the correct path.
-     */
     private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
         return try {
             val parts = drmKey.trim().split(":")
-            if (parts.size != 2) {
-                Log.e(TAG, "Invalid DRM key format (expected keyId:key hex): $drmKey")
-                return null
-            }
-
-            val keyIdHex = parts[0]
-            val keyHex = parts[1]
-
-            // ClearKey requires Base64URL (URL_SAFE flag) with NO padding
-            val keyIdBase64Url = hexToBase64Url(keyIdHex)
-            val keyBase64Url = hexToBase64Url(keyHex)
-
-            // Standard EME ClearKey JSON format
-            val clearKeyJson = """
-                {
-                  "keys": [
-                    {
-                      "kty": "oct",
-                      "k":   "$keyBase64Url",
-                      "kid": "$keyIdBase64Url"
-                    }
-                  ],
-                  "type": "temporary"
-                }
-            """.trimIndent()
-
-            Log.d(TAG, "ClearKey JSON: $clearKeyJson")
-
-            val drmCallback = LocalMediaDrmCallback(clearKeyJson.toByteArray(Charsets.UTF_8))
-
+            if (parts.size != 2) return null
+            val keyIdB64 = hexToBase64Url(parts[0])
+            val keyB64   = hexToBase64Url(parts[1])
+            val json = """{"keys":[{"kty":"oct","k":"$keyB64","kid":"$keyIdB64"}],"type":"temporary"}"""
+            val callback = LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8))
             DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                 .setMultiSession(false)
-                .build(drmCallback)
-
+                .build(callback)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to build ClearKey DRM session manager: ${e.message}", e)
+            Log.e(TAG, "DRM setup failed: ${e.message}", e)
             null
         }
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // 1. Audio Track dialog
     // -------------------------------------------------------------------------
 
-    /** Decode a hex string to bytes, then encode as Base64URL (no padding). */
-    private fun hexToBase64Url(hex: String): String {
-        val bytes = hexToBytes(hex)
-        // URL_SAFE uses '-' and '_' instead of '+' and '/'; NO_PADDING strips '='
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun showAudioTrackDialog() {
+        val exoPlayer = player ?: return
+        val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+
+        if (audioGroups.isEmpty()) {
+            AlertDialog.Builder(requireContext())
+                .setTitle("Audio Track")
+                .setMessage("No audio tracks available.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val labels = audioGroups.mapIndexed { index, group ->
+            val fmt  = group.getTrackFormat(0)
+            val lang = fmt.language?.uppercase() ?: "Track ${index + 1}"
+            val ch   = if (fmt.channelCount > 0) " ${fmt.channelCount}ch" else ""
+            val kbps = if (fmt.bitrate > 0) " ${fmt.bitrate / 1000}kbps" else ""
+            "$lang$ch$kbps"
+        }
+
+        val currentIndex = audioGroups.indexOfFirst { it.isSelected }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Audio Track")
+            .setSingleChoiceItems(labels.toTypedArray(), currentIndex) { dlg, which ->
+                val override = TrackSelectionOverride(audioGroups[which].mediaTrackGroup, 0)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setOverrideForType(override)
+                    .build()
+                dlg.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
-    private fun hexToBytes(hex: String): ByteArray {
-        require(hex.length % 2 == 0) { "Hex string must have even length" }
-        return ByteArray(hex.length / 2) { i ->
-            ((Character.digit(hex[i * 2], 16) shl 4) or
-                    Character.digit(hex[i * 2 + 1], 16)).toByte()
+    // -------------------------------------------------------------------------
+    // 2. Video Quality dialog  (default = highest bitrate via onTracksChanged)
+    // -------------------------------------------------------------------------
+
+    private fun showVideoQualityDialog() {
+        val exoPlayer = player ?: return
+        val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+
+        if (videoGroups.isEmpty()) {
+            AlertDialog.Builder(requireContext())
+                .setTitle("Video Quality")
+                .setMessage("No video tracks available.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
         }
+
+        data class Entry(val groupIdx: Int, val trackIdx: Int, val label: String, val bitrate: Int)
+
+        val entries = mutableListOf<Entry>()
+        videoGroups.forEachIndexed { gi, group ->
+            for (ti in 0 until group.length) {
+                val fmt  = group.getTrackFormat(ti)
+                val res  = if (fmt.height > 0) "${fmt.height}p" else "Track ${gi + 1}"
+                val fps  = if (fmt.frameRate > 0) " ${fmt.frameRate.toInt()}fps" else ""
+                val kbps = if (fmt.bitrate > 0) " (${fmt.bitrate / 1000}kbps)" else ""
+                entries.add(Entry(gi, ti, "$res$fps$kbps", fmt.bitrate))
+            }
+        }
+        entries.sortByDescending { it.bitrate }
+
+        val labels = mutableListOf("Auto") + entries.map { it.label }
+        val currentEntry = entries.indexOfFirst { e -> videoGroups[e.groupIdx].isTrackSelected(e.trackIdx) }
+        val checkedIndex = if (currentEntry >= 0) currentEntry + 1 else 0
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Video Quality")
+            .setSingleChoiceItems(labels.toTypedArray(), checkedIndex) { dlg, which ->
+                if (which == 0) {
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                        .build()
+                } else {
+                    val e = entries[which - 1]
+                    val override = TrackSelectionOverride(videoGroups[e.groupIdx].mediaTrackGroup, e.trackIdx)
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .setOverrideForType(override)
+                        .build()
+                }
+                dlg.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
+
+    // -------------------------------------------------------------------------
+    // 3. Zoom / Resize toggle  (FIT ↔ FILL)
+    // -------------------------------------------------------------------------
+
+    private fun toggleZoom() {
+        isZoomFit = !isZoomFit
+        applyZoomMode()
+        val iconRes = if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
+        binding.playerView.findViewById<android.widget.ImageButton>(R.id.btn_zoom)
+            ?.setImageResource(iconRes)
+    }
+
+    private fun applyZoomMode() {
+        binding.playerView.resizeMode = if (isZoomFit)
+            AspectRatioFrameLayout.RESIZE_MODE_FIT   // nothing cropped (default)
+        else
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM  // fills screen, edges may crop
+    }
+
+    // -------------------------------------------------------------------------
+    // Player listener
+    // -------------------------------------------------------------------------
 
     private val playerListener = object : Player.Listener {
+
+        /** Auto-select the highest-bitrate video track when tracks become available. */
+        override fun onTracksChanged(tracks: Tracks) {
+            val exoPlayer = player ?: return
+            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            if (videoGroups.isEmpty()) return
+
+            var bestGroup   = videoGroups[0]
+            var bestTrack   = 0
+            var bestBitrate = -1
+
+            videoGroups.forEach { group ->
+                for (ti in 0 until group.length) {
+                    val bps = group.getTrackFormat(ti).bitrate
+                    if (bps > bestBitrate) {
+                        bestBitrate = bps
+                        bestGroup   = group
+                        bestTrack   = ti
+                    }
+                }
+            }
+
+            if (!bestGroup.isTrackSelected(bestTrack)) {
+                val override = TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setOverrideForType(override)
+                    .build()
+                Log.d(TAG, "Auto-selected highest video: ${bestBitrate / 1000}kbps")
+            }
+        }
+
         override fun onPlaybackStateChanged(state: Int) {
-            Log.d(TAG, "Playback state: $state")
             when (state) {
                 Player.STATE_BUFFERING -> {
                     binding.progressBuffering.visibility = View.VISIBLE
@@ -290,15 +380,9 @@ class PlayerFragment : Fragment() {
                 }
                 Player.STATE_READY -> {
                     binding.progressBuffering.visibility = View.GONE
-                    viewModel.updatePlaybackState(
-                        isPlaying = player?.isPlaying ?: false,
-                        isBuffering = false
-                    )
+                    viewModel.updatePlaybackState(isPlaying = player?.isPlaying ?: false, isBuffering = false)
                 }
-                Player.STATE_ENDED,
-                Player.STATE_IDLE -> {
-                    binding.progressBuffering.visibility = View.GONE
-                }
+                else -> binding.progressBuffering.visibility = View.GONE
             }
         }
 
@@ -312,21 +396,35 @@ class PlayerFragment : Fragment() {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
     private fun showError(message: String) {
         binding.progressBuffering.visibility = View.GONE
         binding.errorOverlay.visibility = View.VISIBLE
         binding.tvError.text = message
     }
 
-    // -------------------------------------------------------------------------
-    // Lifecycle
-    // -------------------------------------------------------------------------
+    private fun hexToBase64Url(hex: String): String =
+        Base64.encodeToString(hexToBytes(hex), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
+    private fun hexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "Hex string must have even length" }
+        return ByteArray(hex.length / 2) { i ->
+            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
+        }
+    }
 
     private fun releasePlayer() {
         player?.removeListener(playerListener)
         player?.release()
         player = null
     }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
 
     override fun onPause() {
         super.onPause()
@@ -341,3 +439,4 @@ class PlayerFragment : Fragment() {
         _binding = null
     }
 }
+
