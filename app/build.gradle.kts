@@ -70,9 +70,15 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.9.1")
     implementation("androidx.media3:media3-session:1.9.1")
 
-    // Hilt
+    // ✅ Hilt - FIXED
     implementation("com.google.dagger:hilt-android:2.50")
     kapt("com.google.dagger:hilt-compiler:2.50")
+    
+    // ✅ Hilt Navigation (THIS WAS MISSING - REQUIRED for @HiltViewModel)
+    implementation("androidx.hilt:hilt-navigation-fragment:1.1.0")
+    
+    // ✅ Hilt ViewModel (REQUIRED for @HiltViewModel annotation)
+    implementation("androidx.hilt:hilt-lifecycle-viewmodel:1.0.0-alpha03")
 
     // Room
     implementation("androidx.room:room-runtime:2.6.1")
