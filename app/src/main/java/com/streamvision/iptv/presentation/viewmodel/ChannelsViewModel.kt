@@ -1,6 +1,8 @@
 package com.streamvision.iptv.presentation.ui.channels
 
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -11,17 +13,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
 import com.google.android.material.snackbar.Snackbar
-import com.google.android.material.textfield.TextFieldExtensions.doAfterTextChanged
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -30,11 +31,11 @@ class ChannelsFragment : Fragment() {
     private var _binding: FragmentChannelsBinding? = null
     private val binding get() = _binding!!
 
+    // Explicitly type the ViewModel to avoid inference errors
     private val viewModel: ChannelsViewModel by viewModels()
-    private lateinit var channelAdapter: ChannelAdapter
 
-    // Flow for debounced search
-    private val searchQueryFlow = MutableStateFlow("")
+    private lateinit var channelAdapter: ChannelAdapter
+    private var searchJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -69,25 +70,25 @@ class ChannelsFragment : Fragment() {
         )
         binding.rvChannels.apply {
             adapter = channelAdapter
-            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(requireContext())
+            layoutManager = LinearLayoutManager(requireContext())
         }
     }
 
     private fun setupSearch() {
-        // Collect search flow with debounce to prevent excessive VM updates
-        viewLifecycleOwner.lifecycleScope.launch {
-            searchQueryFlow
-                .debounce(300)
-                .distinctUntilChanged()
-                .collect { query ->
-                    viewModel.setSearchQuery(query)
+        // Standard TextWatcher to avoid library compatibility issues
+        binding.etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            
+            override fun afterTextChanged(s: Editable?) {
+                // Simple debounce logic without external flows
+                searchJob?.cancel()
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(300) // Wait 300ms after typing stops
+                    viewModel.setSearchQuery(s?.toString() ?: "")
                 }
-        }
-
-        // Use Material Extensions for cleaner TextWatcher
-        binding.etSearch.doAfterTextChanged { text ->
-            searchQueryFlow.value = text?.toString() ?: ""
-        }
+            }
+        })
     }
 
     private fun setupGroupChipAll() {
@@ -124,7 +125,7 @@ class ChannelsFragment : Fragment() {
             val currentState = viewModel.uiState.value
             when {
                 currentState.currentPlaylist != null -> {
-                    // Returning from player or inside a playlist -> Go back to playlist list
+                    // Inside a playlist -> Go back to playlist list
                     viewModel.clearCurrentPlaylist()
                 }
                 else -> {
@@ -147,8 +148,7 @@ class ChannelsFragment : Fragment() {
     }
 
     /**
-     * Single source of truth for UI rendering based on State.
-     * Replaces separate showChannelView/showPlaylistView methods to prevent state desynchronization.
+     * Single source of truth for UI rendering.
      */
     private fun renderState(state: ChannelsViewModel.UiState) {
         // Loading States
@@ -190,6 +190,7 @@ class ChannelsFragment : Fragment() {
 
         // --- Error Handling ---
         state.error?.let { error ->
+            // Fix overload ambiguity by specifying text and length explicitly
             Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
             viewModel.clearError()
         }
@@ -199,17 +200,12 @@ class ChannelsFragment : Fragment() {
         val chipGroup = binding.chipGroup
 
         // Remove dynamic chips — keep only chip_all at index 0
-        // Optimization: Only remove if count exceeds expected size to avoid unnecessary layout passes
-        if (chipGroup.childCount > groups.size + 1) {
-            while (chipGroup.childCount > 1) {
-                chipGroup.removeViewAt(1)
-            }
+        while (chipGroup.childCount > 1) {
+            chipGroup.removeViewAt(1)
         }
 
         binding.chipAll.isChecked = selectedGroup == null
 
-        // Note: For production apps with many groups, consider using a RecyclerView for chips
-        // to avoid recreating views on every state update.
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
                 text = group
@@ -219,10 +215,6 @@ class ChannelsFragment : Fragment() {
                 setCheckedIconTintResource(R.color.primary_accent)
                 setOnClickListener { viewModel.setSelectedGroup(group) }
             }
-            // Avoid adding duplicate chips if logic above didn't clear them perfectly
-            // Ideally, the while loop above clears them. 
-            // To be safe against duplicates in this simple implementation:
-            // We rely on the while loop clearing everything > 1.
             chipGroup.addView(chip)
         }
     }
@@ -241,5 +233,6 @@ class ChannelsFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+        searchJob?.cancel()
     }
 }
