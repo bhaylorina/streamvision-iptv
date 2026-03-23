@@ -1,6 +1,7 @@
 package com.streamvision.iptv.presentation.ui.player
 
 import android.content.pm.ActivityInfo
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -33,7 +34,6 @@ import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.TimeBar
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
@@ -59,12 +59,10 @@ class PlayerFragment : Fragment() {
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
-    // Auto-hide controls after 3 seconds
     private val hideHandler = Handler(Looper.getMainLooper())
     private val hideRunnable = Runnable { hideControls() }
     private var controlsVisible = true
 
-    // Progress bar update
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressRunnable = object : Runnable {
         override fun run() {
@@ -88,61 +86,83 @@ class PlayerFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        hideSystemUI()
+        enterPlayerMode()
         setupControls()
         observeState()
         viewModel.loadChannel(args.channelId)
     }
 
     // -------------------------------------------------------------------------
-    // System UI
+    // Window / System UI — force EVERYTHING black, no insets
     // -------------------------------------------------------------------------
 
-    private fun hideSystemUI() {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    private fun enterPlayerMode() {
         val window = activity?.window ?: return
+
+        // 1. Force navigation bar + status bar to pure black
+        window.statusBarColor     = Color.BLACK
+        window.navigationBarColor = Color.BLACK
+
+        // 2. Draw edge-to-edge (content goes behind both bars)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // 3. Hide both bars completely
         WindowInsetsControllerCompat(window, requireView()).apply {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+
+        // 4. Landscape
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    private fun exitPlayerMode() {
+        val window = activity?.window ?: return
+
+        // Restore bars
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, requireView()).apply {
+            show(WindowInsetsCompat.Type.systemBars())
+        }
+
+        // Restore nav bar color to match your theme surface color
+        // Change this hex to match @color/surface in your colors.xml
+        window.navigationBarColor = Color.parseColor("#1E1E2E")
+        window.statusBarColor     = Color.parseColor("#1E1E2E")
+
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     // -------------------------------------------------------------------------
-    // Controls wiring — all buttons live in fragment_player.xml
+    // Controls wiring
     // -------------------------------------------------------------------------
 
     private fun setupControls() {
-        // Tap anywhere on video to show/hide controls
         binding.playerView.setOnClickListener { toggleControls() }
 
-        // Retry
         binding.btnRetry.setOnClickListener {
             currentChannel?.let { ch -> releasePlayer(); setupAndPlay(ch) }
         }
 
-        // Back
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() { releasePlayer(); findNavController().popBackStack() }
+                override fun handleOnBackPressed() {
+                    releasePlayer()
+                    findNavController().popBackStack()
+                }
             }
         )
 
-        // Play / Pause
         binding.btnPlayPause.setOnClickListener {
-            player?.let { p ->
-                if (p.isPlaying) p.pause() else p.play()
-                resetHideTimer()
-            }
+            player?.let { p -> if (p.isPlaying) p.pause() else p.play() }
+            resetHideTimer()
         }
 
-        // Rewind 10s
         binding.btnRewind.setOnClickListener {
             player?.seekTo(maxOf(0, (player?.currentPosition ?: 0) - SEEK_INCREMENT_MS))
             resetHideTimer()
         }
 
-        // Fast-forward 10s
         binding.btnFastForward.setOnClickListener {
             player?.let { p ->
                 val dur = p.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
@@ -151,19 +171,13 @@ class PlayerFragment : Fragment() {
             resetHideTimer()
         }
 
-        // Audio
-        binding.btnAudioTrack.setOnClickListener { showAudioTrackDialog(); resetHideTimer() }
-
-        // Quality
+        binding.btnAudioTrack.setOnClickListener   { showAudioTrackDialog();  resetHideTimer() }
         binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog(); resetHideTimer() }
+        binding.btnZoom.setOnClickListener         { toggleZoom();             resetHideTimer() }
 
-        // Zoom
-        binding.btnZoom.setOnClickListener { toggleZoom(); resetHideTimer() }
-
-        // Seek bar scrubbing
         binding.exoProgress.addListener(object : TimeBar.OnScrubListener {
             override fun onScrubStart(timeBar: TimeBar, position: Long) { resetHideTimer() }
-            override fun onScrubMove(timeBar: TimeBar, position: Long) {}
+            override fun onScrubMove(timeBar: TimeBar, position: Long)  {}
             override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) {
                 if (!canceled) player?.seekTo(position)
                 resetHideTimer()
@@ -198,22 +212,18 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Progress bar update
+    // Progress bar
     // -------------------------------------------------------------------------
 
     private fun updateProgressBar() {
         val p = player ?: return
         val position = p.currentPosition
         val duration = p.duration.takeIf { it > 0 } ?: 0
-        val buffered = p.bufferedPosition
-
         binding.exoProgress.setDuration(duration)
         binding.exoProgress.setPosition(position)
-        binding.exoProgress.setBufferedPosition(buffered)
+        binding.exoProgress.setBufferedPosition(p.bufferedPosition)
         binding.exoPosition.text = formatTime(position)
         binding.exoDuration.text = formatTime(duration)
-
-        // Update play/pause icon
         binding.btnPlayPause.setImageResource(
             if (p.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
@@ -503,8 +513,7 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         releasePlayer()
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
+        exitPlayerMode()   // restore nav bar color and orientation
         _binding = null
     }
 }
