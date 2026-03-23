@@ -13,7 +13,6 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
@@ -65,28 +64,27 @@ class PlayerFragment : Fragment() {
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
-    // Audio manager for volume control
+    // Audio
     private lateinit var audioManager: AudioManager
     private var maxVolume  = 0
-    private var initVolume = 0   // volume at gesture start
+    private var initVolume = 0
 
     // Brightness
-    private var initBrightness = 0f // 0f..1f, brightness at gesture start
+    private var initBrightness = 0f
 
-    // Gesture state
+    // Gesture
     private var gestureStartY    = 0f
     private var gestureStartX    = 0f
     private var gestureType      = GestureType.NONE
-    private val GESTURE_THRESHOLD = 10f  // px before we decide H or V
+    private val GESTURE_THRESHOLD = 10f
 
-    // Auto-hide overlay after 1.5 s of no movement
-    private val overlayHideHandler = Handler(Looper.getMainLooper())
-    private val hideBrightnessRunnable = Runnable {
-        binding.brightnessOverlay.visibility = View.GONE
-    }
-    private val hideVolumeRunnable = Runnable {
-        binding.volumeOverlay.visibility = View.GONE
-    }
+    // Bar track height in px (matches 120dp in XML)
+    private val BAR_TRACK_DP = 120
+
+    // Auto-hide overlays
+    private val overlayHandler = Handler(Looper.getMainLooper())
+    private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
+    private val hideVolume     = Runnable { binding.volumeOverlay.visibility     = View.GONE }
 
     private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
 
@@ -143,7 +141,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Controller visibility — sync channel name label
+    // Controller visibility → sync channel name
     // -------------------------------------------------------------------------
 
     private fun setupControllerVisibilityListener() {
@@ -155,10 +153,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Swipe gestures
-    // Left  half of screen → brightness
-    // Right half of screen → volume
-    // Swipe UP   = increase, DOWN = decrease
+    // Gesture: left half = brightness, right half = volume
     // -------------------------------------------------------------------------
 
     private fun setupGestures() {
@@ -168,47 +163,36 @@ class PlayerFragment : Fragment() {
             when (event.actionMasked) {
 
                 MotionEvent.ACTION_DOWN -> {
-                    gestureStartX    = event.x
-                    gestureStartY    = event.y
-                    gestureType      = GestureType.NONE
-
-                    // Snapshot current values at gesture start
-                    initVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    gestureStartX  = event.x
+                    gestureStartY  = event.y
+                    gestureType    = GestureType.NONE
+                    initVolume     = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     initBrightness = getCurrentBrightness()
-                    false // let PlayerView also handle the DOWN (for controller show)
+                    false
                 }
 
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.x - gestureStartX
                     val dy = event.y - gestureStartY
 
-                    // Determine gesture type on first significant movement
                     if (gestureType == GestureType.NONE) {
-                        if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD) return@setOnTouchListener false
+                        if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD)
+                            return@setOnTouchListener false
                         gestureType = if (abs(dy) > abs(dx)) {
                             if (gestureStartX < screenWidth / 2) GestureType.BRIGHTNESS
                             else GestureType.VOLUME
-                        } else {
-                            GestureType.HORIZONTAL
-                        }
+                        } else GestureType.HORIZONTAL
                     }
 
                     when (gestureType) {
-                        GestureType.BRIGHTNESS -> {
-                            handleBrightnessGesture(dy, v.height.toFloat())
-                            true // consume — don't pass to PlayerView seek
-                        }
-                        GestureType.VOLUME -> {
-                            handleVolumeGesture(dy, v.height.toFloat())
-                            true
-                        }
-                        else -> false // let PlayerView handle horizontal (seek scrub)
+                        GestureType.BRIGHTNESS -> { handleBrightness(dy, v.height.toFloat()); true }
+                        GestureType.VOLUME     -> { handleVolume(dy, v.height.toFloat());     true }
+                        else                   -> false
                     }
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    gestureType = GestureType.NONE
-                    false
+                    gestureType = GestureType.NONE; false
                 }
 
                 else -> false
@@ -216,36 +200,32 @@ class PlayerFragment : Fragment() {
         }
     }
 
-    // ─── Brightness ───────────────────────────────────────────────────────────
+    // ── Brightness ────────────────────────────────────────────────────────────
 
-    private fun handleBrightnessGesture(dy: Float, viewHeight: Float) {
-        // dy negative = swipe up = brighter
-        val delta      = -(dy / viewHeight)           // -0.5 .. +0.5 per full swipe
-        val newBright  = (initBrightness + delta).coerceIn(0.01f, 1f)
+    private fun handleBrightness(dy: Float, viewHeight: Float) {
+        val delta     = -(dy / viewHeight)
+        val newBright = (initBrightness + delta).coerceIn(0.01f, 1f)
         setBrightness(newBright)
 
         val pct = (newBright * 100).toInt()
-        binding.brightnessBar.progress   = pct
-        binding.tvBrightnessPct.text     = "$pct%"
+        setBarHeight(binding.brightnessBar, pct)
+        binding.tvBrightnessPct.text         = "$pct%"
         binding.brightnessOverlay.visibility = View.VISIBLE
 
-        overlayHideHandler.removeCallbacks(hideBrightnessRunnable)
-        overlayHideHandler.postDelayed(hideBrightnessRunnable, OVERLAY_HIDE_MS)
+        overlayHandler.removeCallbacks(hideBrightness)
+        overlayHandler.postDelayed(hideBrightness, OVERLAY_HIDE_MS)
     }
 
     private fun getCurrentBrightness(): Float {
         val lp = activity?.window?.attributes ?: return 0.5f
         return if (lp.screenBrightness < 0) {
-            // System brightness
             try {
                 Settings.System.getInt(
                     requireContext().contentResolver,
                     Settings.System.SCREEN_BRIGHTNESS
                 ) / 255f
             } catch (e: Exception) { 0.5f }
-        } else {
-            lp.screenBrightness
-        }
+        } else lp.screenBrightness
     }
 
     private fun setBrightness(value: Float) {
@@ -255,28 +235,41 @@ class PlayerFragment : Fragment() {
         window.attributes   = lp
     }
 
-    // ─── Volume ───────────────────────────────────────────────────────────────
+    // ── Volume ────────────────────────────────────────────────────────────────
 
-    private fun handleVolumeGesture(dy: Float, viewHeight: Float) {
-        // dy negative = swipe up = louder
-        val delta     = -(dy / viewHeight) * maxVolume  // steps
-        val newVol    = (initVolume + delta).toInt().coerceIn(0, maxVolume)
+    private fun handleVolume(dy: Float, viewHeight: Float) {
+        val delta  = -(dy / viewHeight) * maxVolume
+        val newVol = (initVolume + delta).toInt().coerceIn(0, maxVolume)
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
 
-        val pct = (newVol * 100 / maxVolume)
-        binding.volumeBar.progress   = pct
+        val pct = newVol * 100 / maxVolume
+        setBarHeight(binding.volumeBar, pct)
         binding.tvVolumePct.text     = "$pct%"
         binding.ivVolumeIcon.setImageResource(
             when {
-                newVol == 0  -> R.drawable.ic_volume_mute
-                newVol < maxVolume / 2 -> R.drawable.ic_volume_down
-                else         -> R.drawable.ic_volume_up
+                newVol == 0                -> R.drawable.ic_volume_mute
+                newVol < maxVolume / 2     -> R.drawable.ic_volume_down
+                else                       -> R.drawable.ic_volume_up
             }
         )
         binding.volumeOverlay.visibility = View.VISIBLE
 
-        overlayHideHandler.removeCallbacks(hideVolumeRunnable)
-        overlayHideHandler.postDelayed(hideVolumeRunnable, OVERLAY_HIDE_MS)
+        overlayHandler.removeCallbacks(hideVolume)
+        overlayHandler.postDelayed(hideVolume, OVERLAY_HIDE_MS)
+    }
+
+    // ── Bar height helper ─────────────────────────────────────────────────────
+
+    /**
+     * Sets the height of the white fill View to pct% of the 120dp track.
+     */
+    private fun setBarHeight(barView: View, pct: Int) {
+        val density   = resources.displayMetrics.density
+        val trackPx   = (BAR_TRACK_DP * density).toInt()
+        val fillPx    = (trackPx * pct / 100)
+        val lp        = barView.layoutParams
+        lp.height     = fillPx
+        barView.layoutParams = lp
     }
 
     // -------------------------------------------------------------------------
@@ -297,7 +290,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Wire 3 custom buttons inside controller layout
+    // Wire 3 custom buttons
     // -------------------------------------------------------------------------
 
     private fun wireCustomButtons() {
@@ -567,7 +560,7 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        overlayHideHandler.removeCallbacksAndMessages(null)
+        overlayHandler.removeCallbacksAndMessages(null)
         releasePlayer()
         exitPlayerMode()
         _binding = null
