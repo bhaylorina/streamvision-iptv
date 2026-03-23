@@ -16,6 +16,8 @@ data class ChannelsUiState(
     val groups: List<String> = emptyList(),
     val selectedGroup: String? = null,
     val searchQuery: String = "",
+    // Add this property to ChannelsViewModel
+    var isShowingChannels: Boolean = false
     val isLoading: Boolean = false,
     val error: String? = null,
     val currentPlaylist: Playlist? = null
