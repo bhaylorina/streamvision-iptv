@@ -4,8 +4,14 @@
     android:id="@+id/player_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black">
+    android:background="@android:color/black"
+    android:clickable="true"
+    android:focusable="true">
 
+    <!--
+        PlayerView — video surface only, no controller at all.
+        clickable=false so it never steals touches from its siblings.
+    -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
@@ -18,12 +24,13 @@
         app:surface_type="surface_view"
         app:use_controller="false" />
 
-    <!-- Loading indicator -->
+    <!-- Buffering spinner -->
     <ProgressBar
         android:id="@+id/progress_buffering"
         android:layout_width="64dp"
         android:layout_height="64dp"
         android:layout_gravity="center"
+        android:clickable="false"
         android:visibility="gone" />
 
     <!-- Error overlay -->
@@ -61,7 +68,7 @@
 
     </LinearLayout>
 
-    <!-- Channel name top-left -->
+    <!-- Channel name — top left -->
     <TextView
         android:id="@+id/tv_channel_name"
         android:layout_width="wrap_content"
@@ -69,22 +76,18 @@
         android:layout_gravity="top|start"
         android:layout_margin="16dp"
         android:background="#66000000"
+        android:clickable="false"
         android:padding="8dp"
         android:textColor="@color/white"
         android:textSize="16sp"
         android:textStyle="bold"
         android:visibility="gone" />
 
-    <!-- Touch interceptor — tap anywhere on video area to toggle controls -->
-    <View
-        android:id="@+id/touch_interceptor"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="@android:color/transparent" />
-
-    <!-- Controls overlay — anchored to bottom, floats over video -->
+    <!--
+        Controls bar — LAST child = highest Z-order = gets touches first.
+        The root FrameLayout's onClick fires only when no child consumes the touch,
+        which is exactly what we want for the tap-to-toggle behaviour.
+    -->
     <LinearLayout
         android:id="@+id/controls_container"
         android:layout_width="match_parent"
@@ -94,17 +97,14 @@
         android:clickable="true"
         android:focusable="true"
         android:orientation="vertical"
-        android:padding="8dp"
-        android:visibility="visible">
+        android:padding="8dp">
 
         <!-- Seek bar -->
         <androidx.media3.ui.DefaultTimeBar
             android:id="@+id/exo_progress"
             android:layout_width="match_parent"
             android:layout_height="26dp"
-            android:layout_marginBottom="4dp"
-            android:clickable="true"
-            android:focusable="true" />
+            android:layout_marginBottom="4dp" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -112,6 +112,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Position -->
             <TextView
                 android:id="@+id/exo_position"
                 android:layout_width="wrap_content"
@@ -127,6 +128,7 @@
                 android:textColor="@color/white"
                 android:textSize="14sp" />
 
+            <!-- Duration -->
             <TextView
                 android:id="@+id/exo_duration"
                 android:layout_width="wrap_content"
