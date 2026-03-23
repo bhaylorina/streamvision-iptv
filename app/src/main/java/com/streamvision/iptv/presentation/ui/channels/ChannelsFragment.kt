@@ -57,6 +57,12 @@ class ChannelsFragment : Fragment() {
         observeUiState()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // ✅ Refresh playlists when returning from Settings
+        viewModel.refreshPlaylists()
+    }
+
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
@@ -122,9 +128,11 @@ class ChannelsFragment : Fragment() {
             val currentState = viewModel.uiState.value
             when {
                 currentState.currentPlaylist != null -> {
+                    // Inside playlist → Go back to playlist list
                     viewModel.clearCurrentPlaylist()
                 }
                 else -> {
+                    // On playlist list → Exit normally
                     isEnabled = false
                     requireActivity().onBackPressedDispatcher.onBackPressed()
                 }
@@ -142,7 +150,6 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    // ✅ FIXED: Changed from ChannelsViewModel.UiState to ChannelsUiState
     private fun renderState(state: ChannelsUiState) {
         // Loading
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
