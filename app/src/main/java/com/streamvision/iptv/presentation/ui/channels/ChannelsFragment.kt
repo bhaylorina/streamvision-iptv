@@ -6,9 +6,9 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.activity.addCallback
+import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.viewModels
+import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -26,16 +26,23 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ✅ @AndroidEntryPoint हटा दिया
+@AndroidEntryPoint
 class ChannelsFragment : Fragment() {
 
     private var _binding: FragmentChannelsBinding? = null
     private val binding get() = _binding!!
 
-    // ✅ Simple ViewModel initialization
-    private val viewModel: ChannelsViewModel by viewModels()
+    // activityViewModels — survives fragment view recreation when returning from player
+    private val viewModel: ChannelsViewModel by activityViewModels()
     private lateinit var channelAdapter: ChannelAdapter
     private var searchJob: Job? = null
+
+    // Enabled only when viewing channel list
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            viewModel.clearCurrentPlaylist()
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -49,11 +56,12 @@ class ChannelsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
         setupButtons()
-        setupBackNavigation()
         setupSwipeRefresh()
         observeUiState()
     }
@@ -83,7 +91,6 @@ class ChannelsFragment : Fragment() {
         binding.etSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            
             override fun afterTextChanged(s: Editable?) {
                 searchJob?.cancel()
                 searchJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -123,21 +130,6 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    private fun setupBackNavigation() {
-        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner) {
-            val currentState = viewModel.uiState.value
-            when {
-                currentState.currentPlaylist != null -> {
-                    viewModel.clearCurrentPlaylist()
-                }
-                else -> {
-                    isEnabled = false
-                    requireActivity().onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        }
-    }
-
     private fun observeUiState() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -154,6 +146,9 @@ class ChannelsFragment : Fragment() {
 
         val isShowingChannels = state.currentPlaylist != null
 
+        // Enable/disable back interception based on current view
+        backCallback.isEnabled = isShowingChannels
+
         binding.tvPlaylistName.text = if (isShowingChannels) {
             state.currentPlaylist?.name ?: getString(R.string.playlists)
         } else {
@@ -161,10 +156,10 @@ class ChannelsFragment : Fragment() {
         }
 
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.etSearch.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.scrollGroups.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
-        
+        binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
+
         binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
             View.VISIBLE
         } else {
@@ -187,20 +182,16 @@ class ChannelsFragment : Fragment() {
 
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
         val chipGroup = binding.chipGroup
-
         while (chipGroup.childCount > 1) {
             chipGroup.removeViewAt(1)
         }
-
         binding.chipAll.isChecked = selectedGroup == null
-
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
                 text = group
                 isCheckable = true
                 isChecked = group == selectedGroup
                 setChipBackgroundColorResource(R.color.surface)
-                setCheckedIconTintResource(R.color.primary_accent)
                 setOnClickListener { viewModel.setSelectedGroup(group) }
             }
             chipGroup.addView(chip)
