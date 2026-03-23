@@ -1,9 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
-    kotlin("kapt")
     id("androidx.navigation.safeargs.kotlin")
 }
 
@@ -63,18 +61,12 @@ dependencies {
     implementation("androidx.navigation:navigation-fragment-ktx:2.7.6")
     implementation("androidx.navigation:navigation-ui-ktx:2.7.6")
 
-    // Media3 (ExoPlayer) 1.9.1
+    // Media3 (ExoPlayer)
     implementation("androidx.media3:media3-exoplayer:1.9.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.9.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.9.1")
     implementation("androidx.media3:media3-ui:1.9.1")
     implementation("androidx.media3:media3-session:1.9.1")
-
-    // Hilt
-    implementation("com.google.dagger:hilt-android:2.50")
-    kapt("com.google.dagger:hilt-compiler:2.50")
-    implementation("androidx.hilt:hilt-navigation-fragment:1.1.0")
-    implementation("androidx.hilt:hilt-lifecycle-viewmodel:1.0.0-alpha03")
 
     // Room
     implementation("androidx.room:room-runtime:2.6.1")
@@ -85,7 +77,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
-    // Coil for image loading
+    // Coil
     implementation("io.coil-kt:coil:2.5.0")
 
     // SwipeRefreshLayout
@@ -95,8 +87,4 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-}
-
-kapt {
-    correctErrorTypes = true
 }
