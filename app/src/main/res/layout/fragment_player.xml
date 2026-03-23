@@ -5,19 +5,27 @@
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
+    <!--
+        KEY FIXES:
+        1. resize_mode="fixed_height"  → video always fills the full screen height,
+           black bars appear on LEFT/RIGHT only (never top/bottom).
+        2. layout_width/height = match_parent fills entire window.
+        3. controller sits INSIDE PlayerView so it overlays on the video,
+           never below it — no grey bar possible.
+    -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:background="@android:color/black"
         app:controller_layout_id="@layout/exo_player_control_view"
-        app:resize_mode="fit"
-        app:show_buffering="when_playing"
+        app:resize_mode="fixed_height"
+        app:show_buffering="never"
         app:show_timeout="3000"
         app:surface_type="surface_view"
-        app:use_controller="true"
-        android:background="@android:color/black" />
+        app:use_controller="true" />
 
-    <!-- Loading indicator -->
+    <!-- Loading indicator — sits on top of PlayerView -->
     <ProgressBar
         android:id="@+id/progress_buffering"
         android:layout_width="64dp"
@@ -60,7 +68,7 @@
 
     </LinearLayout>
 
-    <!-- Channel info overlay -->
+    <!-- Channel name overlay — top left -->
     <LinearLayout
         android:id="@+id/channel_info_overlay"
         android:layout_width="wrap_content"
