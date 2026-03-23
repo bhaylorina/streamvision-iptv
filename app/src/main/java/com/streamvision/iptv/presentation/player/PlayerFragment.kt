@@ -93,43 +93,27 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Window / System UI — force EVERYTHING black, no insets
+    // Window / System UI
     // -------------------------------------------------------------------------
 
     private fun enterPlayerMode() {
         val window = activity?.window ?: return
-
-        // 1. Force navigation bar + status bar to pure black
         window.statusBarColor     = Color.BLACK
         window.navigationBarColor = Color.BLACK
-
-        // 2. Draw edge-to-edge (content goes behind both bars)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // 3. Hide both bars completely
         WindowInsetsControllerCompat(window, requireView()).apply {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-
-        // 4. Landscape
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
     private fun exitPlayerMode() {
         val window = activity?.window ?: return
-
-        // Restore bars
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        WindowInsetsControllerCompat(window, requireView()).apply {
-            show(WindowInsetsCompat.Type.systemBars())
-        }
-
-        // Restore nav bar color to match your theme surface color
-        // Change this hex to match @color/surface in your colors.xml
+        WindowInsetsControllerCompat(window, requireView()).show(WindowInsetsCompat.Type.systemBars())
         window.navigationBarColor = Color.parseColor("#1E1E2E")
         window.statusBarColor     = Color.parseColor("#1E1E2E")
-
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
@@ -138,7 +122,9 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun setupControls() {
-        binding.playerView.setOnClickListener { toggleControls() }
+        // Transparent overlay behind controls — toggles show/hide on tap
+        // It sits BELOW controls_container in Z-order so controls get touches first
+        binding.touchInterceptor.setOnClickListener { toggleControls() }
 
         binding.btnRetry.setOnClickListener {
             currentChannel?.let { ch -> releasePlayer(); setupAndPlay(ch) }
@@ -171,13 +157,16 @@ class PlayerFragment : Fragment() {
             resetHideTimer()
         }
 
-        binding.btnAudioTrack.setOnClickListener   { showAudioTrackDialog();  resetHideTimer() }
+        binding.btnAudioTrack.setOnClickListener   { showAudioTrackDialog();   resetHideTimer() }
         binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog(); resetHideTimer() }
         binding.btnZoom.setOnClickListener         { toggleZoom();             resetHideTimer() }
 
+        // Seekbar scrubbing
         binding.exoProgress.addListener(object : TimeBar.OnScrubListener {
-            override fun onScrubStart(timeBar: TimeBar, position: Long) { resetHideTimer() }
-            override fun onScrubMove(timeBar: TimeBar, position: Long)  {}
+            override fun onScrubStart(timeBar: TimeBar, position: Long) {
+                resetHideTimer()
+            }
+            override fun onScrubMove(timeBar: TimeBar, position: Long) {}
             override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) {
                 if (!canceled) player?.seekTo(position)
                 resetHideTimer()
@@ -513,7 +502,7 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         releasePlayer()
-        exitPlayerMode()   // restore nav bar color and orientation
+        exitPlayerMode()
         _binding = null
     }
 }
