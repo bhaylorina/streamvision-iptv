@@ -4,14 +4,16 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="24dp">
 
     <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/til_playlist_name"
         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="@string/playlist_name"
-        app:boxBackgroundColor="@color/surface">
+        app:boxStrokeColor="@color/primary_accent"
+        app:hintTextColor="@color/text_secondary">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/et_playlist_name"
@@ -23,12 +25,14 @@
     </com.google.android.material.textfield.TextInputLayout>
 
     <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/til_playlist_url"
         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="16dp"
         android:hint="@string/playlist_url"
-        app:boxBackgroundColor="@color/surface">
+        app:boxStrokeColor="@color/primary_accent"
+        app:hintTextColor="@color/text_secondary">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/et_playlist_url"
