@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -41,18 +42,33 @@ class MainActivity : AppCompatActivity() {
 
         binding.bottomNavigation.setupWithNavController(navController)
 
-        // Handle navigation destination changes
         navController.addOnDestinationChangedListener { _, destination, _ ->
             when (destination.id) {
                 R.id.playerFragment -> {
+                    // Player screen: hide nav bar and remove bottom margin
+                    // so the fragment fills the FULL screen with zero gap
                     binding.bottomNavigation.visibility = View.GONE
                     binding.miniPlayer.root.visibility = View.GONE
+                    setNavHostBottomMargin(0)
                 }
                 else -> {
+                    // All other screens: show nav bar and restore 56dp margin
                     binding.bottomNavigation.visibility = View.VISIBLE
+                    setNavHostBottomMargin(56)
                 }
             }
         }
+    }
+
+    /**
+     * Dynamically sets the bottom margin of the NavHostFragment container.
+     * @param dp margin in dp (0 for player, 56 for all other screens)
+     */
+    private fun setNavHostBottomMargin(dp: Int) {
+        val px = (dp * resources.displayMetrics.density).toInt()
+        val params = binding.navHostFragment.layoutParams as ViewGroup.MarginLayoutParams
+        params.bottomMargin = px
+        binding.navHostFragment.layoutParams = params
     }
 
     private fun requestPermissions() {
