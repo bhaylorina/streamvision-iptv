@@ -21,6 +21,8 @@ import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -30,8 +32,8 @@ class ChannelsFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: ChannelsViewModel by viewModels()
-
     private lateinit var channelAdapter: ChannelAdapter
+    private var searchJob: Job? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -54,27 +56,6 @@ class ChannelsFragment : Fragment() {
         observeUiState()
     }
 
-    // ✅ Back press: Player → ChannelList → PlaylistList
-    private fun setupBackNavigation() {
-        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner) {
-            when {
-                viewModel.uiState.value.isShowingChannels -> {
-                    // Returning from player — stay on channel list, just reset flag
-                    viewModel.clearCurrentPlaylist()
-                }
-                binding.rvChannels.visibility == View.VISIBLE -> {
-                    // On channel list → go back to playlist list
-                    showPlaylistView()
-                }
-                else -> {
-                    // On playlist list → exit normally
-                    isEnabled = false
-                    requireActivity().onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        }
-    }
-
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
@@ -94,10 +75,16 @@ class ChannelsFragment : Fragment() {
     private fun setupSearch() {
         binding.etSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                viewModel.setSearchQuery(s?.toString() ?: "")
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            
+            override fun afterTextChanged(s: Editable?) {
+                // Debounce search to avoid filtering on every keystroke
+                searchJob?.cancel()
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(300)
+                    viewModel.setSearchQuery(s?.toString() ?: "")
+                }
             }
-            override fun afterTextChanged(s: Editable?) {}
         })
     }
 
@@ -109,7 +96,8 @@ class ChannelsFragment : Fragment() {
 
     private fun setupButtons() {
         binding.btnBackToPlaylists.setOnClickListener {
-            showPlaylistView()
+            // Trigger state change via ViewModel
+            viewModel.clearCurrentPlaylist()
         }
         binding.btnAddPlaylist.setOnClickListener {
             showAddPlaylistDialog()
@@ -130,53 +118,79 @@ class ChannelsFragment : Fragment() {
         }
     }
 
+    private fun setupBackNavigation() {
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner) {
+            val currentState = viewModel.uiState.value
+            when {
+                // If inside a playlist, go back to playlist list
+                currentState.currentPlaylist != null -> {
+                    viewModel.clearCurrentPlaylist()
+                }
+                // Otherwise, let system handle back press (exit app or previous fragment)
+                else -> {
+                    isEnabled = false
+                    requireActivity().onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        }
+    }
+
     private fun observeUiState() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
-
-                    // Loading
-                    binding.progressBar.visibility =
-                        if (state.isLoading) View.VISIBLE else View.GONE
-                    binding.swipeRefresh.isRefreshing = state.isLoading
-
-                    if (state.playlistsLoaded) {
-                        if (state.currentPlaylist != null) {
-                            // ─── CHANNEL LIST VIEW ───────────────────────────
-                            showChannelView()
-
-                            binding.tvPlaylistName.text = state.currentPlaylist.name
-
-                            channelAdapter.submitList(state.filteredChannels)
-
-                            // Empty state for channels (no results)
-                            binding.emptyState.visibility =
-                                if (!state.isLoading && state.filteredChannels.isEmpty())
-                                    View.VISIBLE else View.GONE
-
-                            updateGroupChips(state.groups, state.selectedGroup)
-
-                        } else {
-                            // ─── PLAYLIST LIST VIEW ──────────────────────────
-                            showPlaylistView()
-
-                            // ✅ THIS was the missing piece:
-                            // Show "No playlists" empty state in center when list is empty
-                            binding.tvNoPlaylists.visibility =
-                                if (state.hasNoPlaylists) View.VISIBLE else View.GONE
-
-                            binding.rvPlaylists.visibility =
-                                if (!state.hasNoPlaylists) View.VISIBLE else View.GONE
-                        }
-                    }
-
-                    // Error snackbar
-                    state.error?.let { error ->
-                        Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
-                        viewModel.clearError()
-                    }
+                    renderState(state)
                 }
             }
+        }
+    }
+
+    /**
+     * Single source of truth for UI rendering.
+     * No ViewModel actions should be called here.
+     */
+    private fun renderState(state: ChannelsViewModel.UiState) {
+        // Loading
+        binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
+        binding.swipeRefresh.isRefreshing = state.isLoading
+
+        // Determine View Mode
+        val isShowingChannels = state.currentPlaylist != null
+
+        // --- Common Elements ---
+        binding.tvPlaylistName.text = if (isShowingChannels) {
+            state.currentPlaylist.name
+        } else {
+            getString(R.string.playlists)
+        }
+
+        // --- Channel List View Visibility ---
+        binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.scrollGroups.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
+        
+        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+
+        // --- Playlist List View Visibility ---
+        binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
+        binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
+
+        // --- Data Updates ---
+        if (isShowingChannels) {
+            channelAdapter.submitList(state.filteredChannels)
+            updateGroupChips(state.groups, state.selectedGroup)
+        }
+
+        // --- Error Handling ---
+        state.error?.let { error ->
+            // .toString() ensures no overload ambiguity
+            Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
+            viewModel.clearError()
         }
     }
 
@@ -201,32 +215,6 @@ class ChannelsFragment : Fragment() {
             }
             chipGroup.addView(chip)
         }
-
-        binding.scrollGroups.visibility =
-            if (groups.isNotEmpty()) View.VISIBLE else View.GONE
-    }
-
-    /** Switch to channel list UI */
-    private fun showChannelView() {
-        binding.rvPlaylists.visibility = View.GONE
-        binding.tvNoPlaylists.visibility = View.GONE
-        binding.rvChannels.visibility = View.VISIBLE
-        binding.btnBackToPlaylists.visibility = View.VISIBLE
-        binding.searchLayout.visibility = View.VISIBLE
-        binding.scrollGroups.visibility = View.VISIBLE
-    }
-
-    /** Switch back to playlist list UI */
-    private fun showPlaylistView() {
-        binding.rvChannels.visibility = View.GONE
-        binding.emptyState.visibility = View.GONE
-        binding.searchLayout.visibility = View.GONE
-        binding.scrollGroups.visibility = View.GONE
-        binding.btnBackToPlaylists.visibility = View.GONE
-        binding.tvPlaylistName.text = getString(R.string.playlists)
-        viewModel.clearCurrentPlaylist()
-        // tv_no_playlists and rv_playlists visibility
-        // is handled in observeUiState based on hasNoPlaylists
     }
 
     private fun navigateToPlayer(channelId: Long) {
@@ -243,5 +231,6 @@ class ChannelsFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+        searchJob?.cancel()
     }
 }
