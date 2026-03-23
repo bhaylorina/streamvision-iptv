@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/player_background">
+    android:background="@android:color/black">
 
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
@@ -13,7 +13,9 @@
         app:resize_mode="fit"
         app:show_buffering="when_playing"
         app:show_timeout="3000"
-        app:use_controller="true" />
+        app:surface_type="surface_view"
+        app:use_controller="true"
+        android:background="@android:color/black" />
 
     <!-- Loading indicator -->
     <ProgressBar
@@ -58,7 +60,7 @@
 
     </LinearLayout>
 
-    <!-- Channel info overlay (shown when paused) -->
+    <!-- Channel info overlay -->
     <LinearLayout
         android:id="@+id/channel_info_overlay"
         android:layout_width="wrap_content"
