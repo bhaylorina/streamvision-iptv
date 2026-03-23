@@ -26,12 +26,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@AndroidEntryPoint
+// ✅ @AndroidEntryPoint हटा दिया
 class ChannelsFragment : Fragment() {
 
     private var _binding: FragmentChannelsBinding? = null
     private val binding get() = _binding!!
 
+    // ✅ Simple ViewModel initialization
     private val viewModel: ChannelsViewModel by viewModels()
     private lateinit var channelAdapter: ChannelAdapter
     private var searchJob: Job? = null
@@ -59,7 +60,6 @@ class ChannelsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // ✅ Refresh playlists when returning from Settings
         viewModel.refreshPlaylists()
     }
 
@@ -128,11 +128,9 @@ class ChannelsFragment : Fragment() {
             val currentState = viewModel.uiState.value
             when {
                 currentState.currentPlaylist != null -> {
-                    // Inside playlist → Go back to playlist list
                     viewModel.clearCurrentPlaylist()
                 }
                 else -> {
-                    // On playlist list → Exit normally
                     isEnabled = false
                     requireActivity().onBackPressedDispatcher.onBackPressed()
                 }
@@ -151,21 +149,17 @@ class ChannelsFragment : Fragment() {
     }
 
     private fun renderState(state: ChannelsUiState) {
-        // Loading
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = state.isLoading
 
-        // Determine View Mode
         val isShowingChannels = state.currentPlaylist != null
 
-        // --- Common Elements ---
         binding.tvPlaylistName.text = if (isShowingChannels) {
             state.currentPlaylist?.name ?: getString(R.string.playlists)
         } else {
             getString(R.string.playlists)
         }
 
-        // --- Channel List View Visibility ---
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
@@ -177,17 +171,14 @@ class ChannelsFragment : Fragment() {
             View.GONE
         }
 
-        // --- Playlist List View Visibility ---
         binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
-        // --- Data Updates ---
         if (isShowingChannels) {
             channelAdapter.submitList(state.filteredChannels)
             updateGroupChips(state.groups, state.selectedGroup)
         }
 
-        // --- Error Handling ---
         state.error?.let { error ->
             Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
             viewModel.clearError()
