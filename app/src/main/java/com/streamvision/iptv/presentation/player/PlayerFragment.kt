@@ -2,15 +2,22 @@ package com.streamvision.iptv.presentation.ui.player
 
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.getSystemService
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -33,6 +40,7 @@ import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
@@ -41,6 +49,7 @@ import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @UnstableApi
 @AndroidEntryPoint
@@ -56,8 +65,34 @@ class PlayerFragment : Fragment() {
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
+    // Audio manager for volume control
+    private lateinit var audioManager: AudioManager
+    private var maxVolume  = 0
+    private var initVolume = 0   // volume at gesture start
+
+    // Brightness
+    private var initBrightness = 0f // 0f..1f, brightness at gesture start
+
+    // Gesture state
+    private var gestureStartY    = 0f
+    private var gestureStartX    = 0f
+    private var gestureType      = GestureType.NONE
+    private val GESTURE_THRESHOLD = 10f  // px before we decide H or V
+
+    // Auto-hide overlay after 1.5 s of no movement
+    private val overlayHideHandler = Handler(Looper.getMainLooper())
+    private val hideBrightnessRunnable = Runnable {
+        binding.brightnessOverlay.visibility = View.GONE
+    }
+    private val hideVolumeRunnable = Runnable {
+        binding.volumeOverlay.visibility = View.GONE
+    }
+
+    private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
+
     companion object {
-        private const val TAG = "PlayerFragment"
+        private const val TAG             = "PlayerFragment"
+        private const val OVERLAY_HIDE_MS = 1500L
     }
 
     override fun onCreateView(
@@ -69,8 +104,14 @@ class PlayerFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        audioManager = requireContext().getSystemService()!!
+        maxVolume    = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
         enterPlayerMode()
         setupStaticListeners()
+        setupGestures()
+        setupControllerVisibilityListener()
         observeState()
         viewModel.loadChannel(args.channelId)
     }
@@ -102,7 +143,144 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Static listeners (retry + back — don't need player to exist)
+    // Controller visibility — sync channel name label
+    // -------------------------------------------------------------------------
+
+    private fun setupControllerVisibilityListener() {
+        binding.playerView.setControllerVisibilityListener(
+            PlayerView.ControllerVisibilityListener { visibility ->
+                binding.tvChannelName.visibility = visibility
+            }
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Swipe gestures
+    // Left  half of screen → brightness
+    // Right half of screen → volume
+    // Swipe UP   = increase, DOWN = decrease
+    // -------------------------------------------------------------------------
+
+    private fun setupGestures() {
+        binding.playerView.setOnTouchListener { v, event ->
+            val screenWidth = v.width.toFloat()
+
+            when (event.actionMasked) {
+
+                MotionEvent.ACTION_DOWN -> {
+                    gestureStartX    = event.x
+                    gestureStartY    = event.y
+                    gestureType      = GestureType.NONE
+
+                    // Snapshot current values at gesture start
+                    initVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    initBrightness = getCurrentBrightness()
+                    false // let PlayerView also handle the DOWN (for controller show)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.x - gestureStartX
+                    val dy = event.y - gestureStartY
+
+                    // Determine gesture type on first significant movement
+                    if (gestureType == GestureType.NONE) {
+                        if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD) return@setOnTouchListener false
+                        gestureType = if (abs(dy) > abs(dx)) {
+                            if (gestureStartX < screenWidth / 2) GestureType.BRIGHTNESS
+                            else GestureType.VOLUME
+                        } else {
+                            GestureType.HORIZONTAL
+                        }
+                    }
+
+                    when (gestureType) {
+                        GestureType.BRIGHTNESS -> {
+                            handleBrightnessGesture(dy, v.height.toFloat())
+                            true // consume — don't pass to PlayerView seek
+                        }
+                        GestureType.VOLUME -> {
+                            handleVolumeGesture(dy, v.height.toFloat())
+                            true
+                        }
+                        else -> false // let PlayerView handle horizontal (seek scrub)
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    gestureType = GestureType.NONE
+                    false
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    // ─── Brightness ───────────────────────────────────────────────────────────
+
+    private fun handleBrightnessGesture(dy: Float, viewHeight: Float) {
+        // dy negative = swipe up = brighter
+        val delta      = -(dy / viewHeight)           // -0.5 .. +0.5 per full swipe
+        val newBright  = (initBrightness + delta).coerceIn(0.01f, 1f)
+        setBrightness(newBright)
+
+        val pct = (newBright * 100).toInt()
+        binding.brightnessBar.progress   = pct
+        binding.tvBrightnessPct.text     = "$pct%"
+        binding.brightnessOverlay.visibility = View.VISIBLE
+
+        overlayHideHandler.removeCallbacks(hideBrightnessRunnable)
+        overlayHideHandler.postDelayed(hideBrightnessRunnable, OVERLAY_HIDE_MS)
+    }
+
+    private fun getCurrentBrightness(): Float {
+        val lp = activity?.window?.attributes ?: return 0.5f
+        return if (lp.screenBrightness < 0) {
+            // System brightness
+            try {
+                Settings.System.getInt(
+                    requireContext().contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS
+                ) / 255f
+            } catch (e: Exception) { 0.5f }
+        } else {
+            lp.screenBrightness
+        }
+    }
+
+    private fun setBrightness(value: Float) {
+        val window = activity?.window ?: return
+        val lp     = window.attributes
+        lp.screenBrightness = value.coerceIn(0.01f, 1f)
+        window.attributes   = lp
+    }
+
+    // ─── Volume ───────────────────────────────────────────────────────────────
+
+    private fun handleVolumeGesture(dy: Float, viewHeight: Float) {
+        // dy negative = swipe up = louder
+        val delta     = -(dy / viewHeight) * maxVolume  // steps
+        val newVol    = (initVolume + delta).toInt().coerceIn(0, maxVolume)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+
+        val pct = (newVol * 100 / maxVolume)
+        binding.volumeBar.progress   = pct
+        binding.tvVolumePct.text     = "$pct%"
+        binding.ivVolumeIcon.setImageResource(
+            when {
+                newVol == 0  -> R.drawable.ic_volume_mute
+                newVol < maxVolume / 2 -> R.drawable.ic_volume_down
+                else         -> R.drawable.ic_volume_up
+            }
+        )
+        binding.volumeOverlay.visibility = View.VISIBLE
+
+        overlayHideHandler.removeCallbacks(hideVolumeRunnable)
+        overlayHideHandler.postDelayed(hideVolumeRunnable, OVERLAY_HIDE_MS)
+    }
+
+    // -------------------------------------------------------------------------
+    // Static listeners
     // -------------------------------------------------------------------------
 
     private fun setupStaticListeners() {
@@ -119,22 +297,17 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Wire the 3 custom buttons AFTER PlayerView has inflated its controller.
-    // We use playerView.post{} because the controller view is inflated lazily.
-    // These 3 buttons live inside exo_player_control_view.xml.
+    // Wire 3 custom buttons inside controller layout
     // -------------------------------------------------------------------------
 
     private fun wireCustomButtons() {
         binding.playerView.post {
-            val audioBtn = binding.playerView.findViewById<ImageButton>(R.id.btn_audio_track)
-            val qualBtn  = binding.playerView.findViewById<ImageButton>(R.id.btn_video_quality)
-            val zoomBtn  = binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)
-
-            audioBtn?.setOnClickListener { showAudioTrackDialog() }
-            qualBtn?.setOnClickListener  { showVideoQualityDialog() }
-            zoomBtn?.setOnClickListener  { toggleZoom() }
-
-            Log.d(TAG, "Custom buttons wired: audio=$audioBtn quality=$qualBtn zoom=$zoomBtn")
+            binding.playerView.findViewById<ImageButton>(R.id.btn_audio_track)
+                ?.setOnClickListener { showAudioTrackDialog() }
+            binding.playerView.findViewById<ImageButton>(R.id.btn_video_quality)
+                ?.setOnClickListener { showVideoQualityDialog() }
+            binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)
+                ?.setOnClickListener { toggleZoom() }
         }
     }
 
@@ -193,8 +366,6 @@ class PlayerFragment : Fragment() {
         }
 
         applyZoomMode()
-
-        // Wire custom buttons after PlayerView has set up its controller
         wireCustomButtons()
     }
 
@@ -239,34 +410,21 @@ class PlayerFragment : Fragment() {
     private fun showAudioTrackDialog() {
         val exo    = player ?: return
         val groups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-
         if (groups.isEmpty()) {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Audio Track")
-                .setMessage("No audio tracks available.")
-                .setPositiveButton("OK", null)
-                .show()
+            AlertDialog.Builder(requireContext()).setTitle("Audio Track")
+                .setMessage("No audio tracks available.").setPositiveButton("OK", null).show()
             return
         }
-
         val labels = groups.mapIndexed { i, g ->
-            val f    = g.getTrackFormat(0)
-            val lang = f.language?.uppercase() ?: "Track ${i + 1}"
-            val ch   = if (f.channelCount > 0) " ${f.channelCount}ch" else ""
-            "$lang$ch"
+            val f = g.getTrackFormat(0)
+            "${f.language?.uppercase() ?: "Track ${i+1}"}${if (f.channelCount > 0) " ${f.channelCount}ch" else ""}"
         }
-        val current = groups.indexOfFirst { it.isSelected }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("Audio Track")
-            .setSingleChoiceItems(labels.toTypedArray(), current) { dlg, which ->
+        AlertDialog.Builder(requireContext()).setTitle("Audio Track")
+            .setSingleChoiceItems(labels.toTypedArray(), groups.indexOfFirst { it.isSelected }) { dlg, which ->
                 exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(groups[which].mediaTrackGroup, 0))
-                    .build()
+                    .setOverrideForType(TrackSelectionOverride(groups[which].mediaTrackGroup, 0)).build()
                 dlg.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     // -------------------------------------------------------------------------
@@ -274,38 +432,27 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
-        val exo    = player ?: return
+        val exo     = player ?: return
         val vGroups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-
         if (vGroups.isEmpty()) {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Video Quality")
-                .setMessage("No video tracks available.")
-                .setPositiveButton("OK", null)
-                .show()
+            AlertDialog.Builder(requireContext()).setTitle("Video Quality")
+                .setMessage("No video tracks available.").setPositiveButton("OK", null).show()
             return
         }
-
         data class E(val gi: Int, val ti: Int, val label: String, val bps: Int)
-
         val entries = mutableListOf<E>()
         vGroups.forEachIndexed { gi, g ->
             for (ti in 0 until g.length) {
                 val f = g.getTrackFormat(ti)
-                entries.add(
-                    E(gi, ti,
-                        "${if (f.height > 0) "${f.height}p" else "Track ${gi+1}"}${if (f.frameRate > 0) " ${f.frameRate.toInt()}fps" else ""}${if (f.bitrate > 0) " (${f.bitrate/1000}kbps)" else ""}",
-                        f.bitrate)
-                )
+                entries.add(E(gi, ti,
+                    "${if (f.height > 0) "${f.height}p" else "Track ${gi+1}"}${if (f.frameRate > 0) " ${f.frameRate.toInt()}fps" else ""}${if (f.bitrate > 0) " (${f.bitrate/1000}kbps)" else ""}",
+                    f.bitrate))
             }
         }
         entries.sortByDescending { it.bps }
-
         val labels  = mutableListOf("Auto") + entries.map { it.label }
         val current = entries.indexOfFirst { e -> vGroups[e.gi].isTrackSelected(e.ti) }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("Video Quality")
+        AlertDialog.Builder(requireContext()).setTitle("Video Quality")
             .setSingleChoiceItems(labels.toTypedArray(), if (current >= 0) current + 1 else 0) { dlg, which ->
                 if (which == 0) {
                     exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
@@ -313,13 +460,10 @@ class PlayerFragment : Fragment() {
                 } else {
                     val e = entries[which - 1]
                     exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                        .setOverrideForType(TrackSelectionOverride(vGroups[e.gi].mediaTrackGroup, e.ti))
-                        .build()
+                        .setOverrideForType(TrackSelectionOverride(vGroups[e.gi].mediaTrackGroup, e.ti)).build()
                 }
                 dlg.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     // -------------------------------------------------------------------------
@@ -329,7 +473,6 @@ class PlayerFragment : Fragment() {
     private fun toggleZoom() {
         isZoomFit = !isZoomFit
         applyZoomMode()
-        // Update the icon inside the controller view
         binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)
             ?.setImageResource(if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill)
     }
@@ -346,13 +489,11 @@ class PlayerFragment : Fragment() {
 
     private val playerListener = object : Player.Listener {
 
-        // Auto-select highest bitrate video track
         override fun onTracksChanged(tracks: Tracks) {
             val exo     = player ?: return
             val vGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
             if (vGroups.isEmpty()) return
-
-            var bestG   = vGroups[0]; var bestT = 0; var bestBps = -1
+            var bestG = vGroups[0]; var bestT = 0; var bestBps = -1
             vGroups.forEach { g ->
                 for (ti in 0 until g.length) {
                     val bps = g.getTrackFormat(ti).bitrate
@@ -362,7 +503,6 @@ class PlayerFragment : Fragment() {
             if (!bestG.isTrackSelected(bestT)) {
                 exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
                     .setOverrideForType(TrackSelectionOverride(bestG.mediaTrackGroup, bestT)).build()
-                Log.d(TAG, "Auto-selected ${bestBps / 1000}kbps video")
             }
         }
 
@@ -374,10 +514,7 @@ class PlayerFragment : Fragment() {
                 }
                 Player.STATE_READY -> {
                     binding.progressBuffering.visibility = View.GONE
-                    viewModel.updatePlaybackState(
-                        isPlaying   = player?.isPlaying ?: false,
-                        isBuffering = false
-                    )
+                    viewModel.updatePlaybackState(isPlaying = player?.isPlaying ?: false, isBuffering = false)
                 }
                 else -> binding.progressBuffering.visibility = View.GONE
             }
@@ -430,6 +567,7 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        overlayHideHandler.removeCallbacksAndMessages(null)
         releasePlayer()
         exitPlayerMode()
         _binding = null
