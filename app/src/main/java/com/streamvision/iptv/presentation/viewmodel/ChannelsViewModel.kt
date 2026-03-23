@@ -1,33 +1,7 @@
-package com.streamvision.iptv.presentation.viewmodel
-
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.streamvision.iptv.domain.model.Channel
-import com.streamvision.iptv.domain.model.Playlist
-import com.streamvision.iptv.domain.usecase.*
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
-import javax.inject.Inject
-
-data class ChannelsUiState(
-    val channels: List<Channel> = emptyList(),
-    val filteredChannels: List<Channel> = emptyList(),
-    val groups: List<String> = emptyList(),
-    val selectedGroup: String? = null,
-    val searchQuery: String = "",
-    val isLoading: Boolean = false,
-    val error: String? = null,
-    val currentPlaylist: Playlist? = null,
-    val playlistsLoaded: Boolean = false,
-    val hasNoPlaylists: Boolean = false
-)
-
 @HiltViewModel
 class ChannelsViewModel @Inject constructor(
     private val getChannelsUseCase: GetChannelsUseCase,
     private val getChannelGroupsUseCase: GetChannelGroupsUseCase,
-    private val searchChannelsUseCase: SearchChannelsUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
     private val updateLastWatchedUseCase: UpdateLastWatchedUseCase,
     private val getPlaylistsUseCase: GetPlaylistsUseCase,
@@ -44,18 +18,23 @@ class ChannelsViewModel @Inject constructor(
 
     private fun loadPlaylists() {
         viewModelScope.launch {
-            getPlaylistsUseCase().collect { playlists ->
-                _uiState.update {
-                    it.copy(
-                        playlistsLoaded = true,
-                        hasNoPlaylists = playlists.isEmpty(),
-                        // ✅ Only set currentPlaylist if explicitly selected
-                        // Don't auto-load first playlist
-                        currentPlaylist = it.currentPlaylist
-                    )
+            // ✅ Flow को continuously observe करें
+            getPlaylistsUseCase()
+                .onEach { playlists ->
+                    _uiState.update {
+                        it.copy(
+                            playlistsLoaded = true,
+                            hasNoPlaylists = playlists.isEmpty()
+                        )
+                    }
                 }
-            }
+                .launchIn(viewModelScope)
         }
+    }
+
+    fun refreshPlaylists() {
+        // ✅ Explicit refresh के लिए
+        loadPlaylists()
     }
 
     fun loadChannels(playlistId: Long) {
@@ -64,7 +43,6 @@ class ChannelsViewModel @Inject constructor(
                 it.copy(
                     isLoading = true, 
                     error = null,
-                    // ✅ Reset search and group when loading new playlist
                     searchQuery = "",
                     selectedGroup = null
                 ) 
@@ -78,7 +56,7 @@ class ChannelsViewModel @Inject constructor(
                         currentPlaylist = playlist,
                         channels = channels,
                         filteredChannels = filterChannels(channels, null, ""),
-                        groups = emptyList(), // Will be populated by separate collector
+                        groups = emptyList(),
                         isLoading = false
                     )
                 }
@@ -130,7 +108,6 @@ class ChannelsViewModel @Inject constructor(
         }
     }
 
-    // ✅ FIXED: Actually clears currentPlaylist to show playlist list
     fun clearCurrentPlaylist() {
         _uiState.update { 
             it.copy(
@@ -147,7 +124,6 @@ class ChannelsViewModel @Inject constructor(
             try {
                 val playlistId = addPlaylistUseCase(name, url)
                 loadChannels(playlistId)
-                // ✅ Fixed: Reset loading on success
                 _uiState.update { it.copy(isLoading = false) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message, isLoading = false) }
