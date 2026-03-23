@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+    This layout is inflated INSIDE PlayerView as an overlay.
+    It must be a FrameLayout at the root so Media3 can anchor it to the bottom
+    of the video surface — NOT push the video up.
+
+    The actual controls sit in a LinearLayout anchored to the bottom of this
+    FrameLayout with layout_gravity="bottom". This means they float ON TOP of
+    the video with a semi-transparent background — no grey bar below the video.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_gravity="bottom"
-    android:background="@android:color/transparent"
-    android:orientation="vertical">
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
         android:background="#CC000000"
         android:orientation="vertical"
         android:padding="8dp">
@@ -26,6 +34,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Position -->
             <TextView
                 android:id="@id/exo_position"
                 android:layout_width="wrap_content"
@@ -40,6 +49,7 @@
                 android:textColor="@color/white"
                 android:textSize="14sp" />
 
+            <!-- Duration -->
             <TextView
                 android:id="@id/exo_duration"
                 android:layout_width="wrap_content"
@@ -88,19 +98,21 @@
                 android:src="@drawable/ic_zoom_fit"
                 android:tint="@color/white" />
 
-            <!-- Playback controls -->
+            <!-- Rewind -->
             <ImageButton
                 android:id="@id/exo_rew"
                 style="@style/ExoMediaButton.Rewind"
                 android:layout_width="48dp"
                 android:layout_height="48dp" />
 
+            <!-- Play/Pause -->
             <ImageButton
                 android:id="@id/exo_play_pause"
                 style="@style/ExoMediaButton"
                 android:layout_width="48dp"
                 android:layout_height="48dp" />
 
+            <!-- Fast Forward -->
             <ImageButton
                 android:id="@id/exo_ffwd"
                 style="@style/ExoMediaButton.FastForward"
@@ -111,5 +123,4 @@
 
     </LinearLayout>
 
-</LinearLayout>
-
+</FrameLayout>
