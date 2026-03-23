@@ -2,6 +2,8 @@ package com.streamvision.iptv.presentation.ui.player
 
 import android.content.pm.ActivityInfo
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
@@ -31,6 +33,8 @@ import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.DefaultTimeBar
+import androidx.media3.ui.TimeBar
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
@@ -39,6 +43,7 @@ import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 @UnstableApi
 @AndroidEntryPoint
@@ -52,18 +57,30 @@ class PlayerFragment : Fragment() {
 
     private var player: ExoPlayer? = null
     private var currentChannel: Channel? = null
-
-    // Zoom state: true = FIT (default), false = FILL
     private var isZoomFit = true
+
+    // Auto-hide controls after 3 seconds
+    private val hideHandler = Handler(Looper.getMainLooper())
+    private val hideRunnable = Runnable { hideControls() }
+    private var controlsVisible = true
+
+    // Progress bar update
+    private val progressHandler = Handler(Looper.getMainLooper())
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            updateProgressBar()
+            progressHandler.postDelayed(this, 500)
+        }
+    }
 
     companion object {
         private const val TAG = "PlayerFragment"
+        private const val CONTROLS_HIDE_DELAY = 3000L
+        private const val SEEK_INCREMENT_MS = 10_000L
     }
 
     override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
         _binding = FragmentPlayerBinding.inflate(inflater, container, false)
         return binding.root
@@ -72,55 +89,143 @@ class PlayerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         hideSystemUI()
-        setupClickListeners()
+        setupControls()
         observeState()
         viewModel.loadChannel(args.channelId)
     }
+
+    // -------------------------------------------------------------------------
+    // System UI
+    // -------------------------------------------------------------------------
 
     private fun hideSystemUI() {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         val window = activity?.window ?: return
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val controller = WindowInsetsControllerCompat(window, requireView())
-        controller.hide(WindowInsetsCompat.Type.systemBars())
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        WindowInsetsControllerCompat(window, requireView()).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Click listeners
+    // Controls wiring — all buttons live in fragment_player.xml
     // -------------------------------------------------------------------------
 
-    private fun setupClickListeners() {
+    private fun setupControls() {
+        // Tap anywhere on video to show/hide controls
+        binding.playerView.setOnClickListener { toggleControls() }
+
+        // Retry
         binding.btnRetry.setOnClickListener {
-            currentChannel?.let { channel ->
-                releasePlayer()
-                setupAndPlay(channel)
-            }
+            currentChannel?.let { ch -> releasePlayer(); setupAndPlay(ch) }
         }
 
+        // Back
         requireActivity().onBackPressedDispatcher.addCallback(
-            viewLifecycleOwner,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    releasePlayer()
-                    findNavController().popBackStack()
-                }
+            viewLifecycleOwner, object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() { releasePlayer(); findNavController().popBackStack() }
             }
         )
 
-        // The 3 buttons live inside the custom controller layout inside PlayerView.
-        // We must look them up via PlayerView's own view hierarchy.
-        binding.playerView.post {
-            binding.playerView.findViewById<View>(R.id.btn_audio_track)
-                ?.setOnClickListener { showAudioTrackDialog() }
-
-            binding.playerView.findViewById<View>(R.id.btn_video_quality)
-                ?.setOnClickListener { showVideoQualityDialog() }
-
-            binding.playerView.findViewById<View>(R.id.btn_zoom)
-                ?.setOnClickListener { toggleZoom() }
+        // Play / Pause
+        binding.btnPlayPause.setOnClickListener {
+            player?.let { p ->
+                if (p.isPlaying) p.pause() else p.play()
+                resetHideTimer()
+            }
         }
+
+        // Rewind 10s
+        binding.btnRewind.setOnClickListener {
+            player?.seekTo(maxOf(0, (player?.currentPosition ?: 0) - SEEK_INCREMENT_MS))
+            resetHideTimer()
+        }
+
+        // Fast-forward 10s
+        binding.btnFastForward.setOnClickListener {
+            player?.let { p ->
+                val dur = p.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                p.seekTo(minOf(dur, p.currentPosition + SEEK_INCREMENT_MS))
+            }
+            resetHideTimer()
+        }
+
+        // Audio
+        binding.btnAudioTrack.setOnClickListener { showAudioTrackDialog(); resetHideTimer() }
+
+        // Quality
+        binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog(); resetHideTimer() }
+
+        // Zoom
+        binding.btnZoom.setOnClickListener { toggleZoom(); resetHideTimer() }
+
+        // Seek bar scrubbing
+        binding.exoProgress.addListener(object : TimeBar.OnScrubListener {
+            override fun onScrubStart(timeBar: TimeBar, position: Long) { resetHideTimer() }
+            override fun onScrubMove(timeBar: TimeBar, position: Long) {}
+            override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) {
+                if (!canceled) player?.seekTo(position)
+                resetHideTimer()
+            }
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // Controls visibility
+    // -------------------------------------------------------------------------
+
+    private fun toggleControls() {
+        if (controlsVisible) hideControls() else showControls()
+    }
+
+    private fun showControls() {
+        controlsVisible = true
+        binding.controlsContainer.visibility = View.VISIBLE
+        binding.tvChannelName.visibility = View.VISIBLE
+        resetHideTimer()
+    }
+
+    private fun hideControls() {
+        controlsVisible = false
+        binding.controlsContainer.visibility = View.GONE
+        binding.tvChannelName.visibility = View.GONE
+    }
+
+    private fun resetHideTimer() {
+        hideHandler.removeCallbacks(hideRunnable)
+        if (controlsVisible) hideHandler.postDelayed(hideRunnable, CONTROLS_HIDE_DELAY)
+    }
+
+    // -------------------------------------------------------------------------
+    // Progress bar update
+    // -------------------------------------------------------------------------
+
+    private fun updateProgressBar() {
+        val p = player ?: return
+        val position = p.currentPosition
+        val duration = p.duration.takeIf { it > 0 } ?: 0
+        val buffered = p.bufferedPosition
+
+        binding.exoProgress.setDuration(duration)
+        binding.exoProgress.setPosition(position)
+        binding.exoProgress.setBufferedPosition(buffered)
+        binding.exoPosition.text = formatTime(position)
+        binding.exoDuration.text = formatTime(duration)
+
+        // Update play/pause icon
+        binding.btnPlayPause.setImageResource(
+            if (p.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        )
+    }
+
+    private fun formatTime(ms: Long): String {
+        if (ms <= 0) return "00:00"
+        val h = TimeUnit.MILLISECONDS.toHours(ms)
+        val m = TimeUnit.MILLISECONDS.toMinutes(ms) % 60
+        val s = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+        else String.format("%02d:%02d", m, s)
     }
 
     // -------------------------------------------------------------------------
@@ -134,7 +239,6 @@ class PlayerFragment : Fragment() {
                     state.currentChannel?.let { channel ->
                         if (currentChannel?.id != channel.id) {
                             currentChannel = channel
-                            Log.d(TAG, "New channel: ${channel.name} | URL: ${channel.url}")
                             releasePlayer()
                             setupAndPlay(channel)
                         }
@@ -177,7 +281,9 @@ class PlayerFragment : Fragment() {
             exoPlayer.playWhenReady = true
         }
 
-        applyZoomMode() // restore zoom preference on new player
+        applyZoomMode()
+        progressHandler.post(progressRunnable)
+        showControls()
     }
 
     // -------------------------------------------------------------------------
@@ -219,69 +325,50 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // 1. Audio Track dialog
+    // Audio Track dialog
     // -------------------------------------------------------------------------
 
     private fun showAudioTrackDialog() {
         val exoPlayer = player ?: return
         val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-
         if (audioGroups.isEmpty()) {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Audio Track")
-                .setMessage("No audio tracks available.")
-                .setPositiveButton("OK", null)
-                .show()
+            AlertDialog.Builder(requireContext()).setTitle("Audio Track")
+                .setMessage("No audio tracks available.").setPositiveButton("OK", null).show()
             return
         }
-
-        val labels = audioGroups.mapIndexed { index, group ->
-            val fmt  = group.getTrackFormat(0)
-            val lang = fmt.language?.uppercase() ?: "Track ${index + 1}"
+        val labels = audioGroups.mapIndexed { i, g ->
+            val fmt  = g.getTrackFormat(0)
+            val lang = fmt.language?.uppercase() ?: "Track ${i + 1}"
             val ch   = if (fmt.channelCount > 0) " ${fmt.channelCount}ch" else ""
-            val kbps = if (fmt.bitrate > 0) " ${fmt.bitrate / 1000}kbps" else ""
-            "$lang$ch$kbps"
+            "$lang$ch"
         }
-
-        val currentIndex = audioGroups.indexOfFirst { it.isSelected }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("Audio Track")
-            .setSingleChoiceItems(labels.toTypedArray(), currentIndex) { dlg, which ->
-                val override = TrackSelectionOverride(audioGroups[which].mediaTrackGroup, 0)
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                    .buildUpon()
-                    .setOverrideForType(override)
+        val current = audioGroups.indexOfFirst { it.isSelected }
+        AlertDialog.Builder(requireContext()).setTitle("Audio Track")
+            .setSingleChoiceItems(labels.toTypedArray(), current) { dlg, which ->
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(audioGroups[which].mediaTrackGroup, 0))
                     .build()
                 dlg.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     // -------------------------------------------------------------------------
-    // 2. Video Quality dialog  (default = highest bitrate via onTracksChanged)
+    // Video Quality dialog
     // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
         val exoPlayer = player ?: return
         val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-
         if (videoGroups.isEmpty()) {
-            AlertDialog.Builder(requireContext())
-                .setTitle("Video Quality")
-                .setMessage("No video tracks available.")
-                .setPositiveButton("OK", null)
-                .show()
+            AlertDialog.Builder(requireContext()).setTitle("Video Quality")
+                .setMessage("No video tracks available.").setPositiveButton("OK", null).show()
             return
         }
-
-        data class Entry(val groupIdx: Int, val trackIdx: Int, val label: String, val bitrate: Int)
-
+        data class Entry(val gi: Int, val ti: Int, val label: String, val bitrate: Int)
         val entries = mutableListOf<Entry>()
-        videoGroups.forEachIndexed { gi, group ->
-            for (ti in 0 until group.length) {
-                val fmt  = group.getTrackFormat(ti)
+        videoGroups.forEachIndexed { gi, g ->
+            for (ti in 0 until g.length) {
+                val fmt  = g.getTrackFormat(ti)
                 val res  = if (fmt.height > 0) "${fmt.height}p" else "Track ${gi + 1}"
                 val fps  = if (fmt.frameRate > 0) " ${fmt.frameRate.toInt()}fps" else ""
                 val kbps = if (fmt.bitrate > 0) " (${fmt.bitrate / 1000}kbps)" else ""
@@ -289,50 +376,40 @@ class PlayerFragment : Fragment() {
             }
         }
         entries.sortByDescending { it.bitrate }
-
         val labels = mutableListOf("Auto") + entries.map { it.label }
-        val currentEntry = entries.indexOfFirst { e -> videoGroups[e.groupIdx].isTrackSelected(e.trackIdx) }
-        val checkedIndex = if (currentEntry >= 0) currentEntry + 1 else 0
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("Video Quality")
-            .setSingleChoiceItems(labels.toTypedArray(), checkedIndex) { dlg, which ->
+        val cur = entries.indexOfFirst { e -> videoGroups[e.gi].isTrackSelected(e.ti) }
+        AlertDialog.Builder(requireContext()).setTitle("Video Quality")
+            .setSingleChoiceItems(labels.toTypedArray(), if (cur >= 0) cur + 1 else 0) { dlg, which ->
                 if (which == 0) {
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                        .buildUpon()
-                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-                        .build()
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
                 } else {
                     val e = entries[which - 1]
-                    val override = TrackSelectionOverride(videoGroups[e.groupIdx].mediaTrackGroup, e.trackIdx)
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                        .buildUpon()
-                        .setOverrideForType(override)
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(TrackSelectionOverride(videoGroups[e.gi].mediaTrackGroup, e.ti))
                         .build()
                 }
                 dlg.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     // -------------------------------------------------------------------------
-    // 3. Zoom / Resize toggle  (FIT ↔ FILL)
+    // Zoom toggle
     // -------------------------------------------------------------------------
 
     private fun toggleZoom() {
         isZoomFit = !isZoomFit
         applyZoomMode()
-        val iconRes = if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
-        binding.playerView.findViewById<android.widget.ImageButton>(R.id.btn_zoom)
-            ?.setImageResource(iconRes)
+        binding.btnZoom.setImageResource(
+            if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
+        )
     }
 
     private fun applyZoomMode() {
         binding.playerView.resizeMode = if (isZoomFit)
-            AspectRatioFrameLayout.RESIZE_MODE_FIT   // nothing cropped (default)
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
         else
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM  // fills screen, edges may crop
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
     // -------------------------------------------------------------------------
@@ -341,34 +418,21 @@ class PlayerFragment : Fragment() {
 
     private val playerListener = object : Player.Listener {
 
-        /** Auto-select the highest-bitrate video track when tracks become available. */
         override fun onTracksChanged(tracks: Tracks) {
             val exoPlayer = player ?: return
             val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
             if (videoGroups.isEmpty()) return
-
-            var bestGroup   = videoGroups[0]
-            var bestTrack   = 0
-            var bestBitrate = -1
-
-            videoGroups.forEach { group ->
-                for (ti in 0 until group.length) {
-                    val bps = group.getTrackFormat(ti).bitrate
-                    if (bps > bestBitrate) {
-                        bestBitrate = bps
-                        bestGroup   = group
-                        bestTrack   = ti
-                    }
+            var bestGroup = videoGroups[0]; var bestTrack = 0; var bestBps = -1
+            videoGroups.forEach { g ->
+                for (ti in 0 until g.length) {
+                    val bps = g.getTrackFormat(ti).bitrate
+                    if (bps > bestBps) { bestBps = bps; bestGroup = g; bestTrack = ti }
                 }
             }
-
             if (!bestGroup.isTrackSelected(bestTrack)) {
-                val override = TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack)
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                    .buildUpon()
-                    .setOverrideForType(override)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack))
                     .build()
-                Log.d(TAG, "Auto-selected highest video: ${bestBitrate / 1000}kbps")
             }
         }
 
@@ -388,6 +452,9 @@ class PlayerFragment : Fragment() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             viewModel.updatePlaybackState(isPlaying = isPlaying)
+            binding.btnPlayPause.setImageResource(
+                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            )
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -417,6 +484,8 @@ class PlayerFragment : Fragment() {
     }
 
     private fun releasePlayer() {
+        progressHandler.removeCallbacks(progressRunnable)
+        hideHandler.removeCallbacks(hideRunnable)
         player?.removeListener(playerListener)
         player?.release()
         player = null
@@ -439,4 +508,3 @@ class PlayerFragment : Fragment() {
         _binding = null
     }
 }
-
