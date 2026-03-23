@@ -1,30 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/player_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black"
-    android:clickable="true"
-    android:focusable="true">
+    android:background="@android:color/black">
 
     <!--
-        PlayerView — video surface only, no controller at all.
-        clickable=false so it never steals touches from its siblings.
+        use_controller="true"  — ExoPlayer manages its own controller internally.
+        Seekbar, play/pause, rewind, fast-forward all work natively.
+        Our 3 extra buttons (audio/quality/zoom) are injected via
+        controller_layout_id pointing to exo_player_control_view.xml.
+        The grey bar is already fixed at the Activity level (layout_marginBottom=0).
     -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/player_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@android:color/black"
-        android:clickable="false"
-        android:focusable="false"
+        app:controller_layout_id="@layout/exo_player_control_view"
         app:resize_mode="fit"
         app:show_buffering="never"
+        app:show_timeout="3000"
         app:surface_type="surface_view"
-        app:use_controller="false" />
+        app:use_controller="true" />
 
-    <!-- Buffering spinner -->
+    <!-- Buffering spinner — sits on top, clickable=false so it never blocks -->
     <ProgressBar
         android:id="@+id/progress_buffering"
         android:layout_width="64dp"
@@ -68,7 +68,7 @@
 
     </LinearLayout>
 
-    <!-- Channel name — top left -->
+    <!-- Channel name — shown in top-left when controls are visible -->
     <TextView
         android:id="@+id/tv_channel_name"
         android:layout_width="wrap_content"
@@ -80,139 +80,6 @@
         android:padding="8dp"
         android:textColor="@color/white"
         android:textSize="16sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
-
-    <!--
-        Controls bar — LAST child = highest Z-order = gets touches first.
-        The root FrameLayout's onClick fires only when no child consumes the touch,
-        which is exactly what we want for the tap-to-toggle behaviour.
-    -->
-    <LinearLayout
-        android:id="@+id/controls_container"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="#CC000000"
-        android:clickable="true"
-        android:focusable="true"
-        android:orientation="vertical"
-        android:padding="8dp">
-
-        <!-- Seek bar -->
-        <androidx.media3.ui.DefaultTimeBar
-            android:id="@+id/exo_progress"
-            android:layout_width="match_parent"
-            android:layout_height="26dp"
-            android:layout_marginBottom="4dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <!-- Position -->
-            <TextView
-                android:id="@+id/exo_position"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="00:00"
-                android:textColor="@color/white"
-                android:textSize="14sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=" / "
-                android:textColor="@color/white"
-                android:textSize="14sp" />
-
-            <!-- Duration -->
-            <TextView
-                android:id="@+id/exo_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="00:00"
-                android:textColor="@color/white"
-                android:textSize="14sp" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
-
-            <!-- Audio Track -->
-            <ImageButton
-                android:id="@+id/btn_audio_track"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="4dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Audio Track"
-                android:padding="6dp"
-                android:src="@drawable/ic_audio_track"
-                android:tint="@color/white" />
-
-            <!-- Video Quality -->
-            <ImageButton
-                android:id="@+id/btn_video_quality"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="4dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Video Quality"
-                android:padding="6dp"
-                android:src="@drawable/ic_video_quality"
-                android:tint="@color/white" />
-
-            <!-- Zoom -->
-            <ImageButton
-                android:id="@+id/btn_zoom"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="4dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Zoom"
-                android:padding="6dp"
-                android:src="@drawable/ic_zoom_fit"
-                android:tint="@color/white" />
-
-            <!-- Rewind -->
-            <ImageButton
-                android:id="@+id/btn_rewind"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Rewind"
-                android:padding="8dp"
-                android:src="@drawable/ic_rewind"
-                android:tint="@color/white" />
-
-            <!-- Play / Pause -->
-            <ImageButton
-                android:id="@+id/btn_play_pause"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Play/Pause"
-                android:padding="8dp"
-                android:src="@drawable/ic_pause"
-                android:tint="@color/white" />
-
-            <!-- Fast Forward -->
-            <ImageButton
-                android:id="@+id/btn_fast_forward"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Fast Forward"
-                android:padding="8dp"
-                android:src="@drawable/ic_fast_forward"
-                android:tint="@color/white" />
-
-        </LinearLayout>
-
-    </LinearLayout>
+        android:textStyle="bold" />
 
 </FrameLayout>
