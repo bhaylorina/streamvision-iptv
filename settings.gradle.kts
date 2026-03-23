@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "StreamVisionIPTV"
+rootProject.name = "streamvision-iptv"
 include(":app")
