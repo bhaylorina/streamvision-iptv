@@ -93,7 +93,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Window / System UI
+    // System UI
     // -------------------------------------------------------------------------
 
     private fun enterPlayerMode() {
@@ -111,7 +111,8 @@ class PlayerFragment : Fragment() {
     private fun exitPlayerMode() {
         val window = activity?.window ?: return
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        WindowInsetsControllerCompat(window, requireView()).show(WindowInsetsCompat.Type.systemBars())
+        WindowInsetsControllerCompat(window, requireView())
+            .show(WindowInsetsCompat.Type.systemBars())
         window.navigationBarColor = Color.parseColor("#1E1E2E")
         window.statusBarColor     = Color.parseColor("#1E1E2E")
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -122,14 +123,24 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun setupControls() {
-        // Transparent overlay behind controls — toggles show/hide on tap
-        // It sits BELOW controls_container in Z-order so controls get touches first
-        binding.touchInterceptor.setOnClickListener { toggleControls() }
+        /*
+         * KEY INSIGHT: In Android, touch events are delivered to children FIRST,
+         * then bubble up to the parent only if no child consumed them.
+         *
+         * So: tap on a button  → button gets it, parent (player_root) does NOT.
+         *     tap on empty video area → no child wants it → player_root gets it → toggleControls().
+         *
+         * This means we do NOT need a separate touch_interceptor view at all.
+         * Just set the click listener on the root FrameLayout (player_root).
+         */
+        binding.playerRoot.setOnClickListener { toggleControls() }
 
+        // Retry
         binding.btnRetry.setOnClickListener {
             currentChannel?.let { ch -> releasePlayer(); setupAndPlay(ch) }
         }
 
+        // Back
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
@@ -139,34 +150,36 @@ class PlayerFragment : Fragment() {
             }
         )
 
+        // Play / Pause
         binding.btnPlayPause.setOnClickListener {
             player?.let { p -> if (p.isPlaying) p.pause() else p.play() }
             resetHideTimer()
         }
 
+        // Rewind 10 s
         binding.btnRewind.setOnClickListener {
-            player?.seekTo(maxOf(0, (player?.currentPosition ?: 0) - SEEK_INCREMENT_MS))
+            player?.seekTo(maxOf(0L, (player?.currentPosition ?: 0L) - SEEK_INCREMENT_MS))
             resetHideTimer()
         }
 
+        // Fast-forward 10 s
         binding.btnFastForward.setOnClickListener {
             player?.let { p ->
-                val dur = p.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                val dur = p.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                 p.seekTo(minOf(dur, p.currentPosition + SEEK_INCREMENT_MS))
             }
             resetHideTimer()
         }
 
+        // Audio / Quality / Zoom
         binding.btnAudioTrack.setOnClickListener   { showAudioTrackDialog();   resetHideTimer() }
         binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog(); resetHideTimer() }
         binding.btnZoom.setOnClickListener         { toggleZoom();             resetHideTimer() }
 
-        // Seekbar scrubbing
+        // Seek bar
         binding.exoProgress.addListener(object : TimeBar.OnScrubListener {
-            override fun onScrubStart(timeBar: TimeBar, position: Long) {
-                resetHideTimer()
-            }
-            override fun onScrubMove(timeBar: TimeBar, position: Long) {}
+            override fun onScrubStart(timeBar: TimeBar, position: Long) { resetHideTimer() }
+            override fun onScrubMove(timeBar: TimeBar, position: Long)  {}
             override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) {
                 if (!canceled) player?.seekTo(position)
                 resetHideTimer()
@@ -185,14 +198,14 @@ class PlayerFragment : Fragment() {
     private fun showControls() {
         controlsVisible = true
         binding.controlsContainer.visibility = View.VISIBLE
-        binding.tvChannelName.visibility = View.VISIBLE
+        binding.tvChannelName.visibility     = View.VISIBLE
         resetHideTimer()
     }
 
     private fun hideControls() {
         controlsVisible = false
         binding.controlsContainer.visibility = View.GONE
-        binding.tvChannelName.visibility = View.GONE
+        binding.tvChannelName.visibility     = View.GONE
     }
 
     private fun resetHideTimer() {
@@ -201,30 +214,29 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Progress bar
+    // Progress bar update (every 500 ms)
     // -------------------------------------------------------------------------
 
     private fun updateProgressBar() {
         val p = player ?: return
-        val position = p.currentPosition
-        val duration = p.duration.takeIf { it > 0 } ?: 0
-        binding.exoProgress.setDuration(duration)
-        binding.exoProgress.setPosition(position)
+        val pos = p.currentPosition
+        val dur = p.duration.takeIf { it > 0L } ?: 0L
+        binding.exoProgress.setDuration(dur)
+        binding.exoProgress.setPosition(pos)
         binding.exoProgress.setBufferedPosition(p.bufferedPosition)
-        binding.exoPosition.text = formatTime(position)
-        binding.exoDuration.text = formatTime(duration)
+        binding.exoPosition.text = formatTime(pos)
+        binding.exoDuration.text = formatTime(dur)
         binding.btnPlayPause.setImageResource(
             if (p.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
     }
 
     private fun formatTime(ms: Long): String {
-        if (ms <= 0) return "00:00"
+        if (ms <= 0L) return "00:00"
         val h = TimeUnit.MILLISECONDS.toHours(ms)
         val m = TimeUnit.MILLISECONDS.toMinutes(ms) % 60
         val s = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
-        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
-        else String.format("%02d:%02d", m, s)
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
     }
 
     // -------------------------------------------------------------------------
@@ -254,18 +266,19 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun setupAndPlay(channel: Channel) {
-        binding.errorOverlay.visibility = View.GONE
+        binding.errorOverlay.visibility   = View.GONE
         binding.progressBuffering.visibility = View.VISIBLE
 
-        val httpFactory = buildHttpDataSourceFactory(channel)
+        val httpFactory   = buildHttpDataSourceFactory(channel)
         val playerBuilder = ExoPlayer.Builder(requireContext())
 
         if (!channel.drmKey.isNullOrBlank()) {
             val drm = buildClearKeyDrmSessionManager(channel.drmKey)
-            val msf = DefaultMediaSourceFactory(requireContext())
-                .setDataSourceFactory(httpFactory)
-                .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
-            playerBuilder.setMediaSourceFactory(msf)
+            playerBuilder.setMediaSourceFactory(
+                DefaultMediaSourceFactory(requireContext())
+                    .setDataSourceFactory(httpFactory)
+                    .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
+            )
         } else {
             playerBuilder.setMediaSourceFactory(
                 DefaultMediaSourceFactory(requireContext()).setDataSourceFactory(httpFactory)
@@ -309,17 +322,13 @@ class PlayerFragment : Fragment() {
         return try {
             val parts = drmKey.trim().split(":")
             if (parts.size != 2) return null
-            val keyIdB64 = hexToBase64Url(parts[0])
-            val keyB64   = hexToBase64Url(parts[1])
-            val json = """{"keys":[{"kty":"oct","k":"$keyB64","kid":"$keyIdB64"}],"type":"temporary"}"""
-            val callback = LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8))
+            val json = """{"keys":[{"kty":"oct","k":"${hexToBase64Url(parts[1])}","kid":"${hexToBase64Url(parts[0])}"}],"type":"temporary"}"""
             DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                 .setMultiSession(false)
-                .build(callback)
+                .build(LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8)))
         } catch (e: Exception) {
-            Log.e(TAG, "DRM setup failed: ${e.message}", e)
-            null
+            Log.e(TAG, "DRM setup failed: ${e.message}", e); null
         }
     }
 
@@ -328,26 +337,22 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun showAudioTrackDialog() {
-        val exoPlayer = player ?: return
-        val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (audioGroups.isEmpty()) {
+        val exo = player ?: return
+        val groups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (groups.isEmpty()) {
             AlertDialog.Builder(requireContext()).setTitle("Audio Track")
                 .setMessage("No audio tracks available.").setPositiveButton("OK", null).show()
             return
         }
-        val labels = audioGroups.mapIndexed { i, g ->
-            val fmt  = g.getTrackFormat(0)
-            val lang = fmt.language?.uppercase() ?: "Track ${i + 1}"
-            val ch   = if (fmt.channelCount > 0) " ${fmt.channelCount}ch" else ""
-            "$lang$ch"
+        val labels = groups.mapIndexed { i, g ->
+            val f = g.getTrackFormat(0)
+            "${f.language?.uppercase() ?: "Track ${i+1}"}${if (f.channelCount > 0) " ${f.channelCount}ch" else ""}"
         }
-        val current = audioGroups.indexOfFirst { it.isSelected }
         AlertDialog.Builder(requireContext()).setTitle("Audio Track")
-            .setSingleChoiceItems(labels.toTypedArray(), current) { dlg, which ->
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(audioGroups[which].mediaTrackGroup, 0))
-                    .build()
-                dlg.dismiss()
+            .setSingleChoiceItems(labels.toTypedArray(), groups.indexOfFirst { it.isSelected }) { d, w ->
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(groups[w].mediaTrackGroup, 0)).build()
+                d.dismiss()
             }.setNegativeButton("Cancel", null).show()
     }
 
@@ -356,39 +361,37 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
-        val exoPlayer = player ?: return
-        val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-        if (videoGroups.isEmpty()) {
+        val exo = player ?: return
+        val vGroups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+        if (vGroups.isEmpty()) {
             AlertDialog.Builder(requireContext()).setTitle("Video Quality")
                 .setMessage("No video tracks available.").setPositiveButton("OK", null).show()
             return
         }
-        data class Entry(val gi: Int, val ti: Int, val label: String, val bitrate: Int)
-        val entries = mutableListOf<Entry>()
-        videoGroups.forEachIndexed { gi, g ->
+        data class E(val gi: Int, val ti: Int, val label: String, val bps: Int)
+        val entries = mutableListOf<E>()
+        vGroups.forEachIndexed { gi, g ->
             for (ti in 0 until g.length) {
-                val fmt  = g.getTrackFormat(ti)
-                val res  = if (fmt.height > 0) "${fmt.height}p" else "Track ${gi + 1}"
-                val fps  = if (fmt.frameRate > 0) " ${fmt.frameRate.toInt()}fps" else ""
-                val kbps = if (fmt.bitrate > 0) " (${fmt.bitrate / 1000}kbps)" else ""
-                entries.add(Entry(gi, ti, "$res$fps$kbps", fmt.bitrate))
+                val f = g.getTrackFormat(ti)
+                entries.add(E(gi, ti,
+                    "${if (f.height > 0) "${f.height}p" else "Track ${gi+1}"}${if (f.frameRate > 0) " ${f.frameRate.toInt()}fps" else ""}${if (f.bitrate > 0) " (${f.bitrate/1000}kbps)" else ""}",
+                    f.bitrate))
             }
         }
-        entries.sortByDescending { it.bitrate }
+        entries.sortByDescending { it.bps }
         val labels = mutableListOf("Auto") + entries.map { it.label }
-        val cur = entries.indexOfFirst { e -> videoGroups[e.gi].isTrackSelected(e.ti) }
+        val cur = entries.indexOfFirst { e -> vGroups[e.gi].isTrackSelected(e.ti) }
         AlertDialog.Builder(requireContext()).setTitle("Video Quality")
-            .setSingleChoiceItems(labels.toTypedArray(), if (cur >= 0) cur + 1 else 0) { dlg, which ->
-                if (which == 0) {
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .setSingleChoiceItems(labels.toTypedArray(), if (cur >= 0) cur + 1 else 0) { d, w ->
+                if (w == 0) {
+                    exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
                         .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
                 } else {
-                    val e = entries[which - 1]
-                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                        .setOverrideForType(TrackSelectionOverride(videoGroups[e.gi].mediaTrackGroup, e.ti))
-                        .build()
+                    val e = entries[w - 1]
+                    exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(TrackSelectionOverride(vGroups[e.gi].mediaTrackGroup, e.ti)).build()
                 }
-                dlg.dismiss()
+                d.dismiss()
             }.setNegativeButton("Cancel", null).show()
     }
 
@@ -405,10 +408,9 @@ class PlayerFragment : Fragment() {
     }
 
     private fun applyZoomMode() {
-        binding.playerView.resizeMode = if (isZoomFit)
-            AspectRatioFrameLayout.RESIZE_MODE_FIT
-        else
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        binding.playerView.resizeMode =
+            if (isZoomFit) AspectRatioFrameLayout.RESIZE_MODE_FIT
+            else           AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
     // -------------------------------------------------------------------------
@@ -418,20 +420,20 @@ class PlayerFragment : Fragment() {
     private val playerListener = object : Player.Listener {
 
         override fun onTracksChanged(tracks: Tracks) {
-            val exoPlayer = player ?: return
-            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-            if (videoGroups.isEmpty()) return
-            var bestGroup = videoGroups[0]; var bestTrack = 0; var bestBps = -1
-            videoGroups.forEach { g ->
+            val exo = player ?: return
+            val vGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            if (vGroups.isEmpty()) return
+            var bestG = vGroups[0]; var bestT = 0; var bestBps = -1
+            vGroups.forEach { g ->
                 for (ti in 0 until g.length) {
                     val bps = g.getTrackFormat(ti).bitrate
-                    if (bps > bestBps) { bestBps = bps; bestGroup = g; bestTrack = ti }
+                    if (bps > bestBps) { bestBps = bps; bestG = g; bestT = ti }
                 }
             }
-            if (!bestGroup.isTrackSelected(bestTrack)) {
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack))
-                    .build()
+            if (!bestG.isTrackSelected(bestT)) {
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(bestG.mediaTrackGroup, bestT)).build()
+                Log.d(TAG, "Auto-selected ${bestBps/1000}kbps video")
             }
         }
 
@@ -468,15 +470,15 @@ class PlayerFragment : Fragment() {
 
     private fun showError(message: String) {
         binding.progressBuffering.visibility = View.GONE
-        binding.errorOverlay.visibility = View.VISIBLE
-        binding.tvError.text = message
+        binding.errorOverlay.visibility      = View.VISIBLE
+        binding.tvError.text                 = message
     }
 
-    private fun hexToBase64Url(hex: String): String =
+    private fun hexToBase64Url(hex: String) =
         Base64.encodeToString(hexToBytes(hex), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     private fun hexToBytes(hex: String): ByteArray {
-        require(hex.length % 2 == 0) { "Hex string must have even length" }
+        require(hex.length % 2 == 0)
         return ByteArray(hex.length / 2) { i ->
             ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
         }
