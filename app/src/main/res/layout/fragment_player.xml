@@ -61,7 +61,7 @@
 
     </LinearLayout>
 
-    <!-- Channel name — synced with controller visibility -->
+    <!-- Channel name -->
     <TextView
         android:id="@+id/tv_channel_name"
         android:layout_width="wrap_content"
@@ -75,97 +75,111 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
-    <!-- ═══════════════════════════════════════════════════
-         BRIGHTNESS indicator — shown on LEFT side swipe
-         ═══════════════════════════════════════════════════ -->
+    <!-- ══════════════════════════════════════════
+         BRIGHTNESS overlay — LEFT side swipe
+         ══════════════════════════════════════════ -->
     <LinearLayout
         android:id="@+id/brightness_overlay"
-        android:layout_width="wrap_content"
+        android:layout_width="56dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical|start"
         android:layout_marginStart="32dp"
         android:background="#BB000000"
         android:gravity="center"
         android:orientation="vertical"
-        android:padding="12dp"
+        android:padding="10dp"
         android:visibility="gone">
 
         <!-- Sun icon -->
         <ImageView
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:src="@drawable/ic_brightness"
             android:tint="@color/white" />
 
-        <!-- Vertical progress bar -->
-        <ProgressBar
-            android:id="@+id/brightness_bar"
-            style="?android:attr/progressBarStyleVertical"
-            android:layout_width="8dp"
+        <!--
+            Vertical bar built from a FrameLayout:
+            - grey track (background)
+            - white fill view whose height we animate in code
+        -->
+        <FrameLayout
+            android:layout_width="10dp"
             android:layout_height="120dp"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
-            android:max="100"
-            android:progress="50"
-            android:progressTint="@color/white"
-            android:rotation="180" />
+            android:background="#44FFFFFF">
 
-        <!-- Percentage text -->
+            <!-- Filled portion — height set programmatically 0..120dp -->
+            <View
+                android:id="@+id/brightness_bar"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_gravity="bottom"
+                android:background="@color/white" />
+
+        </FrameLayout>
+
+        <!-- Percentage -->
         <TextView
             android:id="@+id/tv_brightness_pct"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="50%"
             android:textColor="@color/white"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
 
     </LinearLayout>
 
-    <!-- ═══════════════════════════════════════════════════
-         VOLUME indicator — shown on RIGHT side swipe
-         ═══════════════════════════════════════════════════ -->
+    <!-- ══════════════════════════════════════════
+         VOLUME overlay — RIGHT side swipe
+         ══════════════════════════════════════════ -->
     <LinearLayout
         android:id="@+id/volume_overlay"
-        android:layout_width="wrap_content"
+        android:layout_width="56dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical|end"
         android:layout_marginEnd="32dp"
         android:background="#BB000000"
         android:gravity="center"
         android:orientation="vertical"
-        android:padding="12dp"
+        android:padding="10dp"
         android:visibility="gone">
 
         <!-- Volume icon -->
         <ImageView
             android:id="@+id/iv_volume_icon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
             android:src="@drawable/ic_volume_up"
             android:tint="@color/white" />
 
-        <!-- Vertical progress bar -->
-        <ProgressBar
-            android:id="@+id/volume_bar"
-            style="?android:attr/progressBarStyleVertical"
-            android:layout_width="8dp"
+        <!-- Vertical bar -->
+        <FrameLayout
+            android:layout_width="10dp"
             android:layout_height="120dp"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
-            android:max="100"
-            android:progress="50"
-            android:progressTint="@color/white"
-            android:rotation="180" />
+            android:background="#44FFFFFF">
 
-        <!-- Percentage text -->
+            <!-- Filled portion -->
+            <View
+                android:id="@+id/volume_bar"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_gravity="bottom"
+                android:background="@color/white" />
+
+        </FrameLayout>
+
+        <!-- Percentage -->
         <TextView
             android:id="@+id/tv_volume_pct"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="50%"
             android:textColor="@color/white"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
 
     </LinearLayout>
