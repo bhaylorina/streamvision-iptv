@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.OnBackPressedCallback
 import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -41,6 +42,14 @@ class ChannelsFragment : Fragment() {
 
     private var showingPlaylists = true
 
+    // Back press callback — enabled only when we are inside a channel list
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            // User pressed back while viewing channels → go back to playlist view
+            showPlaylists()
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -52,6 +61,10 @@ class ChannelsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Register the callback once — we enable/disable it as the view state changes
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+
         setupRecyclerViews()
         setupSearch()
         setupChips()
@@ -120,22 +133,23 @@ class ChannelsFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
-                    binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
-                    
+                    binding.progressBar.visibility =
+                        if (state.isLoading) View.VISIBLE else View.GONE
+
                     channelAdapter.submitList(state.filteredChannels)
 
-                    // Update playlist name
-                    binding.tvPlaylistName.text = state.currentPlaylist?.name ?: getString(R.string.playlists)
+                    binding.tvPlaylistName.text =
+                        state.currentPlaylist?.name ?: getString(R.string.playlists)
 
-                    // Update empty state
-                    val showEmpty = state.filteredChannels.isEmpty() && !state.isLoading && !showingPlaylists
-                    binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
-                    binding.rvChannels.visibility = if (showEmpty || showingPlaylists) View.GONE else View.VISIBLE
+                    val showEmpty =
+                        state.filteredChannels.isEmpty() && !state.isLoading && !showingPlaylists
+                    binding.emptyState.visibility =
+                        if (showEmpty) View.VISIBLE else View.GONE
+                    binding.rvChannels.visibility =
+                        if (showEmpty || showingPlaylists) View.GONE else View.VISIBLE
 
-                    // Update group chips
                     updateGroupChips(state.groups, state.selectedGroup)
 
-                    // Show error if any
                     state.error?.let { error ->
                         Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
                         viewModel.clearError()
@@ -148,7 +162,8 @@ class ChannelsFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 settingsViewModel.uiState.collect { state ->
                     playlistAdapter.submitList(state.playlists)
-                    binding.tvNoPlaylists.visibility = if (state.playlists.isEmpty()) View.VISIBLE else View.GONE
+                    binding.tvNoPlaylists.visibility =
+                        if (state.playlists.isEmpty()) View.VISIBLE else View.GONE
                 }
             }
         }
@@ -156,20 +171,26 @@ class ChannelsFragment : Fragment() {
 
     private fun showPlaylists() {
         showingPlaylists = true
-        binding.rvPlaylists.visibility = View.VISIBLE
-        binding.rvChannels.visibility = View.GONE
-        binding.chipGroup.visibility = View.GONE
-        binding.etSearch.visibility = View.GONE
+        // Disable back interception — system back will now exit the app (correct)
+        backCallback.isEnabled = false
+
+        binding.rvPlaylists.visibility      = View.VISIBLE
+        binding.rvChannels.visibility       = View.GONE
+        binding.chipGroup.visibility        = View.GONE
+        binding.etSearch.visibility         = View.GONE
         binding.btnBackToPlaylists.visibility = View.GONE
-        binding.tvPlaylistName.text = getString(R.string.playlists)
+        binding.tvPlaylistName.text         = getString(R.string.playlists)
     }
 
     private fun onPlaylistSelected(playlist: Playlist) {
         showingPlaylists = false
-        binding.rvPlaylists.visibility = View.GONE
-        binding.rvChannels.visibility = View.VISIBLE
-        binding.chipGroup.visibility = View.VISIBLE
-        binding.etSearch.visibility = View.VISIBLE
+        // Enable back interception — back will return to playlist view
+        backCallback.isEnabled = true
+
+        binding.rvPlaylists.visibility      = View.GONE
+        binding.rvChannels.visibility       = View.VISIBLE
+        binding.chipGroup.visibility        = View.VISIBLE
+        binding.etSearch.visibility         = View.VISIBLE
         binding.btnBackToPlaylists.visibility = View.VISIBLE
         viewModel.loadChannels(playlist.id)
     }
@@ -193,7 +214,6 @@ class ChannelsFragment : Fragment() {
                 chipGroup.removeViewAt(i)
             }
         }
-
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
                 text = group
@@ -217,18 +237,20 @@ class ChannelsFragment : Fragment() {
     private fun showAddPlaylistDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_add_playlist, null)
         val etName = dialogView.findViewById<TextInputEditText>(R.id.et_playlist_name)
-        val etUrl = dialogView.findViewById<TextInputEditText>(R.id.et_playlist_url)
+        val etUrl  = dialogView.findViewById<TextInputEditText>(R.id.et_playlist_url)
 
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.add_playlist)
             .setView(dialogView)
             .setPositiveButton(R.string.add) { _, _ ->
                 val name = etName.text?.toString()?.trim()
-                val url = etUrl.text?.toString()?.trim()
+                val url  = etUrl.text?.toString()?.trim()
                 if (!name.isNullOrEmpty() && !url.isNullOrEmpty()) {
                     viewModel.addPlaylist(name, url)
                 } else {
-                    Snackbar.make(binding.root, R.string.no_url_provided, Snackbar.LENGTH_SHORT).show()
+                    Snackbar.make(
+                        binding.root, R.string.no_url_provided, Snackbar.LENGTH_SHORT
+                    ).show()
                 }
             }
             .setNegativeButton(R.string.cancel, null)
