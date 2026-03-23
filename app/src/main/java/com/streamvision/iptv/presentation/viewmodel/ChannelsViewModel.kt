@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.domain.model.Playlist
 import com.streamvision.iptv.domain.usecase.*
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 data class ChannelsUiState(
     val channels: List<Channel> = emptyList(),
@@ -21,8 +23,8 @@ data class ChannelsUiState(
     val hasNoPlaylists: Boolean = false
 )
 
-// ✅ @HiltViewModel हटा दिया
-class ChannelsViewModel(
+@HiltViewModel
+class ChannelsViewModel @Inject constructor(
     private val getChannelsUseCase: GetChannelsUseCase,
     private val getChannelGroupsUseCase: GetChannelGroupsUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
@@ -60,17 +62,17 @@ class ChannelsViewModel(
 
     fun loadChannels(playlistId: Long) {
         viewModelScope.launch {
-            _uiState.update { 
+            _uiState.update {
                 it.copy(
-                    isLoading = true, 
+                    isLoading = true,
                     error = null,
                     searchQuery = "",
                     selectedGroup = null
-                ) 
+                )
             }
 
             val playlist = getPlaylistByIdUseCase(playlistId)
-            
+
             getChannelsUseCase(playlistId).collect { channels ->
                 _uiState.update { state ->
                     state.copy(
@@ -109,7 +111,11 @@ class ChannelsViewModel(
         }
     }
 
-    private fun filterChannels(channels: List<Channel>, group: String?, query: String): List<Channel> {
+    private fun filterChannels(
+        channels: List<Channel>,
+        group: String?,
+        query: String
+    ): List<Channel> {
         return channels.filter { channel ->
             val matchesGroup = group == null || channel.group == group
             val matchesQuery = query.isEmpty() || channel.name.contains(query, ignoreCase = true)
@@ -118,24 +124,24 @@ class ChannelsViewModel(
     }
 
     fun toggleFavorite(channelId: Long) {
-        viewModelScope.launch {
-            toggleFavoriteUseCase(channelId)
-        }
+        viewModelScope.launch { toggleFavoriteUseCase(channelId) }
     }
 
     fun onChannelSelected(channelId: Long) {
-        viewModelScope.launch {
-            updateLastWatchedUseCase(channelId)
-        }
+        viewModelScope.launch { updateLastWatchedUseCase(channelId) }
+    }
+
+    fun updateLastWatched(channelId: Long) {
+        viewModelScope.launch { updateLastWatchedUseCase(channelId) }
     }
 
     fun clearCurrentPlaylist() {
-        _uiState.update { 
+        _uiState.update {
             it.copy(
                 currentPlaylist = null,
                 searchQuery = "",
                 selectedGroup = null
-            ) 
+            )
         }
     }
 
