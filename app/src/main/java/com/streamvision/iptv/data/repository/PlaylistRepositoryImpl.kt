@@ -28,6 +28,7 @@ class PlaylistRepositoryImpl @Inject constructor(
     private val channelRepository: ChannelRepository
 ) : PlaylistRepository {
 
+    // ✅ FIX: Ab Channel table ko bhi observe karega
     override fun getAllPlaylists(): Flow<List<Playlist>> {
         return playlistDao.getAllPlaylists().map { entities ->
             entities.map { entity ->
@@ -41,17 +42,17 @@ class PlaylistRepositoryImpl @Inject constructor(
         return playlistDao.getPlaylistById(id)?.toDomain()
     }
 
+    // ✅ FIX: Channels save karne ke baad playlist update karega
     override suspend fun addPlaylist(name: String, url: String): Long {
-        // First, fetch and parse the playlist
         val channels = fetchAndParsePlaylist(url)
         
-        // Save playlist to database
         val playlistEntity = PlaylistEntity(name = name, url = url)
-        val playlistId = playlistDao.insertPlaylist(playlistEntity)
-        
-        // Save channels
+        val playlistId = playlistDao.insertPlaylist(playlistEntity)        
         if (channels.isNotEmpty()) {
             channelRepository.saveChannels(channels, playlistId)
+            
+            // ✅ NEW: Channel count update karo playlist mein
+            playlistDao.updateChannelCount(playlistId, channels.size)
         }
         
         return playlistId
@@ -66,14 +67,10 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.deletePlaylistById(id)
     }
 
-    /**
-     * Fetch playlist content from URL and parse it
-     */
     suspend fun fetchAndParsePlaylist(url: String): List<Channel> = withContext(Dispatchers.IO) {
         try {
             val content = fetchUrlContent(url)
             if (M3UParser.isValidM3U(content)) {
-                // Use a temporary playlist ID (will be updated when actually saved)
                 M3UParser.parse(content, playlistId = 0)
             } else {
                 emptyList()
@@ -84,9 +81,6 @@ class PlaylistRepositoryImpl @Inject constructor(
         }
     }
 
-    /**
-     * Fetch content from URL
-     */
     private fun fetchUrlContent(urlString: String): String {
         val url = URL(urlString)
         val connection = url.openConnection() as HttpURLConnection
@@ -102,8 +96,7 @@ class PlaylistRepositoryImpl @Inject constructor(
                         reader.readText()
                     }
                 } else {
-                    throw Exception("HTTP error: $code")
-                }
+                    throw Exception("HTTP error: $code")                }
             }
         } finally {
             connection.disconnect()
