@@ -18,6 +18,7 @@ import com.google.android.material.chip.Chip
 import com.google.android.material.snackbar.Snackbar
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
+import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
 import com.streamvision.iptv.presentation.adapter.PlaylistAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
@@ -39,15 +40,16 @@ class ChannelsFragment : Fragment() {
     private lateinit var playlistAdapter: PlaylistAdapter 
     
     private var searchJob: Job? = null
+    private var currentPlayingChannel: Channel? = null
 
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             viewModel.clearCurrentPlaylist()
         }
     }
-
     override fun onCreateView(
-        inflater: LayoutInflater,        container: ViewGroup?,
+        inflater: LayoutInflater,
+        container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentChannelsBinding.inflate(inflater, container, false)
@@ -59,6 +61,7 @@ class ChannelsFragment : Fragment() {
 
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
+        setupMiniPlayer() // ✅ MiniPlayer setup
         setupPlaylistRecyclerView()
         setupChannelRecyclerView()
         setupSearch()
@@ -73,14 +76,32 @@ class ChannelsFragment : Fragment() {
         viewModel.refreshPlaylists()
     }
 
-    // ✅ FIX: Adapter ko dono callbacks de rahe hain
+    // ✅ MiniPlayer Setup
+    private fun setupMiniPlayer() {
+        binding.miniPlayer.root.visibility = View.GONE
+        
+        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
+            // Play/Pause toggle
+        }
+        
+        binding.miniPlayer.btnMiniClose.setOnClickListener {
+            binding.miniPlayer.root.visibility = View.GONE
+            currentPlayingChannel = null
+        }
+        
+        binding.miniPlayer.root.setOnClickListener {
+            // Full screen jaane ke liye
+            currentPlayingChannel?.let { channel ->
+                navigateToPlayer(channel.id)
+            }
+        }
+    }
     private fun setupPlaylistRecyclerView() {
         playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist ->
                 viewModel.selectPlaylist(playlist.id)
             },
             onDeleteClick = { playlist ->
-                // Abhi ke liye bas message dikhayenge (Delete logic Settings mein hai)
                 Snackbar.make(binding.root, "Delete playlist from Settings screen", Snackbar.LENGTH_SHORT).show()
             }
         )
@@ -94,9 +115,10 @@ class ChannelsFragment : Fragment() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
                 viewModel.onChannelSelected(channel.id)
-                navigateToPlayer(channel.id)
+                playInMiniPlayer(channel) // ✅ MiniPlayer mein chalao
             },
-            onFavoriteClick = { channel ->                viewModel.toggleFavorite(channel.id)
+            onFavoriteClick = { channel ->
+                viewModel.toggleFavorite(channel.id)
             }
         )
         binding.rvChannels.apply {
@@ -105,14 +127,25 @@ class ChannelsFragment : Fragment() {
         }
     }
 
+    // ✅ MiniPlayer mein channel chalane ka function
+    private fun playInMiniPlayer(channel: Channel) {
+        currentPlayingChannel = channel
+        
+        binding.miniPlayer.root.visibility = View.VISIBLE
+        binding.miniPlayer.tvMiniTitle.text = channel.name
+        binding.miniPlayer.tvMiniStatus.text = "Playing"
+        
+        // Logo load karo (Coil use kar sakte ho)
+        // coil.load(channel.logoUrl).into(binding.miniPlayer.ivMiniLogo)
+    }
+
     private fun setupSearch() {
         binding.etSearch.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 searchJob?.cancel()
-                searchJob = viewLifecycleOwner.lifecycleScope.launch {
-                    delay(300)
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {                    delay(300)
                     viewModel.setSearchQuery(s?.toString() ?: "")
                 }
             }
@@ -145,7 +178,8 @@ class ChannelsFragment : Fragment() {
             } else {
                 binding.swipeRefresh.isRefreshing = false
             }
-        }    }
+        }
+    }
 
     private fun observeUiState() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -160,20 +194,16 @@ class ChannelsFragment : Fragment() {
     private fun renderState(state: ChannelsUiState) {
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = state.isLoading
-
         val isShowingChannels = state.currentPlaylist != null
 
         backCallback.isEnabled = isShowingChannels
 
-        binding.tvPlaylistName.text = if (isShowingChannels) {
-            state.currentPlaylist?.name ?: getString(R.string.playlists)
-        } else {
-            getString(R.string.playlists)
-        }
+        // ✅ Search aur MiniPlayer hamesha dikhao jab channels ho
+        binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.miniPlayer.root.visibility = if (isShowingChannels && currentPlayingChannel != null) View.VISIBLE else View.GONE
 
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.etSearch.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.btnBackToPlaylists.visibility = View.GONE // ✅ Hata diya
         binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
 
         binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
@@ -194,7 +224,8 @@ class ChannelsFragment : Fragment() {
 
         state.error?.let { error ->
             Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
-            viewModel.clearError()        }
+            viewModel.clearError()
+        }
     }
 
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
@@ -212,8 +243,7 @@ class ChannelsFragment : Fragment() {
                 setOnClickListener { viewModel.setSelectedGroup(group) }
             }
             chipGroup.addView(chip)
-        }
-    }
+        }    }
 
     private fun navigateToPlayer(channelId: Long) {
         val bundle = Bundle().apply { putLong("channelId", channelId) }
