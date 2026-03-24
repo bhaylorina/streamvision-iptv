@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.fragment.app.viewModels
 import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
