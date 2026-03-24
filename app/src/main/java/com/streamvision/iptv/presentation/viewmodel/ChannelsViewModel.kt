@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.domain.model.Playlist
 import com.streamvision.iptv.domain.usecase.*
+import com.streamvision.iptv.player.PlayerManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -19,7 +20,7 @@ data class ChannelsUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val currentPlaylist: Playlist? = null,
-    val playlists: List<Playlist> = emptyList(), // ✅ Ye line add ki hai
+    val playlists: List<Playlist> = emptyList(),
     val playlistsLoaded: Boolean = false,
     val hasNoPlaylists: Boolean = false
 )
@@ -32,7 +33,9 @@ class ChannelsViewModel @Inject constructor(
     private val updateLastWatchedUseCase: UpdateLastWatchedUseCase,
     private val getPlaylistsUseCase: GetPlaylistsUseCase,
     private val addPlaylistUseCase: AddPlaylistUseCase,
-    private val getPlaylistByIdUseCase: GetPlaylistByIdUseCase
+    private val getPlaylistByIdUseCase: GetPlaylistByIdUseCase,
+    // ✅ Shared player manager injected here
+    val playerManager: PlayerManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChannelsUiState())
@@ -47,7 +50,8 @@ class ChannelsViewModel @Inject constructor(
             getPlaylistsUseCase()
                 .onEach { playlists ->
                     _uiState.update {
-                        it.copy(                            playlists = playlists, // ✅ Data state mein save kar rahe hain
+                        it.copy(
+                            playlists = playlists,
                             playlistsLoaded = true,
                             hasNoPlaylists = playlists.isEmpty()
                         )
@@ -61,9 +65,7 @@ class ChannelsViewModel @Inject constructor(
         loadPlaylists()
     }
 
-    // ✅ Ye function Fragment use karega playlist select karne ke liye
     fun selectPlaylist(playlistId: Long) {
-        // ✅ FIX: Clear current channels immediately before loading new ones
         _uiState.update {
             it.copy(
                 channels = emptyList(),
@@ -103,7 +105,8 @@ class ChannelsViewModel @Inject constructor(
             getChannelGroupsUseCase(playlistId).collect { groups ->
                 _uiState.update { it.copy(groups = groups) }
             }
-        }    }
+        }
+    }
 
     fun setSelectedGroup(group: String?) {
         _uiState.update { state ->
@@ -152,7 +155,8 @@ class ChannelsViewModel @Inject constructor(
             it.copy(
                 currentPlaylist = null,
                 searchQuery = "",
-                selectedGroup = null            )
+                selectedGroup = null
+            )
         }
     }
 
