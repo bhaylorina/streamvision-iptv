@@ -19,6 +19,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
+import com.streamvision.iptv.presentation.adapter.PlaylistAdapter // ✅ Import add kiya
 import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -32,20 +33,21 @@ class ChannelsFragment : Fragment() {
     private var _binding: FragmentChannelsBinding? = null
     private val binding get() = _binding!!
 
-    // activityViewModels — survives fragment view recreation when returning from player
     private val viewModel: ChannelsViewModel by activityViewModels()
+    
+    // ✅ Dono adapters initialize kiye
     private lateinit var channelAdapter: ChannelAdapter
+    private lateinit var playlistAdapter: PlaylistAdapter 
+    
     private var searchJob: Job? = null
 
-    // Enabled only when viewing channel list
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             viewModel.clearCurrentPlaylist()
         }
     }
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
+    override fun onCreateView(        inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
@@ -58,6 +60,7 @@ class ChannelsFragment : Fragment() {
 
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
+        setupPlaylistRecyclerView() // ✅ Playlist setup add kiya
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
@@ -71,6 +74,19 @@ class ChannelsFragment : Fragment() {
         viewModel.refreshPlaylists()
     }
 
+    // ✅ Nayi function: Playlist RecyclerView setup
+    private fun setupPlaylistRecyclerView() {
+        playlistAdapter = PlaylistAdapter(
+            onPlaylistClick = { playlist ->
+                viewModel.selectPlaylist(playlist.id) // ✅ Click karne par channels load honge
+            }
+        )
+        binding.rvPlaylists.apply {
+            adapter = playlistAdapter
+            layoutManager = LinearLayoutManager(requireContext())
+        }
+    }
+
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
@@ -80,8 +96,7 @@ class ChannelsFragment : Fragment() {
             onFavoriteClick = { channel ->
                 viewModel.toggleFavorite(channel.id)
             }
-        )
-        binding.rvChannels.apply {
+        )        binding.rvChannels.apply {
             adapter = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
@@ -130,8 +145,7 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    private fun observeUiState() {
-        viewLifecycleOwner.lifecycleScope.launch {
+    private fun observeUiState() {        viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     renderState(state)
@@ -146,7 +160,6 @@ class ChannelsFragment : Fragment() {
 
         val isShowingChannels = state.currentPlaylist != null
 
-        // Enable/disable back interception based on current view
         backCallback.isEnabled = isShowingChannels
 
         binding.tvPlaylistName.text = if (isShowingChannels) {
@@ -155,6 +168,7 @@ class ChannelsFragment : Fragment() {
             getString(R.string.playlists)
         }
 
+        // Channels View Logic
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.etSearch.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
@@ -166,18 +180,21 @@ class ChannelsFragment : Fragment() {
             View.GONE
         }
 
+        // ✅ Playlists View Logic (Fix kiya gaya)
         binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
-        if (isShowingChannels) {
+        // ✅ Data Adapter ko bheja (Ye pehle missing tha)
+        if (!isShowingChannels) {
+            playlistAdapter.submitList(state.playlists)
+        } else {
             channelAdapter.submitList(state.filteredChannels)
             updateGroupChips(state.groups, state.selectedGroup)
         }
 
         state.error?.let { error ->
             Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
-            viewModel.clearError()
-        }
+            viewModel.clearError()        }
     }
 
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
