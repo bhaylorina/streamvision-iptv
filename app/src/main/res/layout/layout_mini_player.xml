@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@color/primary_background">
 
-    <!-- Video Preview (200dp height) -->
+    <!--
+        ✅ FIXED: Mini player sits BELOW the status bar.
+        We do NOT use fitsSystemWindows here because the Activity handles insets.
+        The mini player is placed inside the main layout below the nav host,
+        so it naturally appears under the status bar.
+        Height reduced to 160dp to leave room for controls without feeling too large.
+    -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/mini_player_view"
         android:layout_width="match_parent"
-        android:layout_height="200dp"
+        android:layout_height="160dp"
         android:background="@android:color/black"
         app:layout_constraintTop_toTopOf="parent"
         app:use_controller="false" />
