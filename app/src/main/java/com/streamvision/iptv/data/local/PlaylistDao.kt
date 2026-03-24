@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PlaylistDao {
+    
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     fun getAllPlaylists(): Flow<List<PlaylistEntity>>
     
@@ -18,8 +19,16 @@ interface PlaylistDao {
     suspend fun updatePlaylist(playlist: PlaylistEntity)
     
     @Delete
-    suspend fun deletePlaylist(playlist: PlaylistEntity)
+    suspend fun deletePlaylistById(playlist: PlaylistEntity)
     
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun deletePlaylistById(id: Long)
+    
+    // ✅ NEW: Channel count update karne ke liye
+    @Query("UPDATE playlists SET channelCount = :count WHERE id = :id")
+    suspend fun updateChannelCount(id: Long, count: Int)
+    
+    // ✅ Ye function pehle se hona chahiye (check karna)
+    @Query("SELECT COUNT(*) FROM channels WHERE playlistId = :playlistId")
+    suspend fun getChannelCount(playlistId: Long): Int
 }
