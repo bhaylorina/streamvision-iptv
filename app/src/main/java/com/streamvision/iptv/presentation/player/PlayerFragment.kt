@@ -41,6 +41,7 @@ import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.player.PlayerManager
+import com.streamvision.iptv.presentation.ui.MainActivity
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -54,21 +55,19 @@ class PlayerFragment : Fragment() {
     private var _binding: FragmentPlayerBinding? = null
     private val binding get() = _binding!!
 
-    // ✅ Use activityViewModels to get the SAME ChannelsViewModel instance
     private val channelsViewModel: ChannelsViewModel by activityViewModels()
-    private val viewModel: PlayerViewModel by viewModels() // ✅ FIXED: removed fully qualified name
+    private val viewModel: PlayerViewModel by viewModels()
 
     private val args: PlayerFragmentArgs by navArgs()
 
-    // ✅ Shortcut to the shared player manager
     private val playerManager: PlayerManager get() = channelsViewModel.playerManager
 
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
     private lateinit var audioManager: AudioManager
-    private var maxVolume    = 0
-    private var initVolume   = 0
+    private var maxVolume      = 0
+    private var initVolume     = 0
     private var initBrightness = 0f
 
     private var gestureStartY     = 0f
@@ -145,26 +144,50 @@ class PlayerFragment : Fragment() {
         maxVolume    = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
         enterPlayerMode()
+        setupBackButton()
         setupStaticListeners()
         setupGestures()
         setupControllerVisibilityListener()
         observeChannel()
     }
 
+    // ✅ FIXED: Back button now safely returns to previous screen
+    //    and restores mini player — no crash
+    private fun setupBackButton() {
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner, object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    navigateBack()
+                }
+            }
+        )
+    }
+
+    private fun navigateBack() {
+        // Detach surface — stream keeps playing
+        binding.playerView.player = null
+        exitPlayerMode()
+
+        // ✅ Tell MainActivity to show mini player again
+        currentChannel?.let { channel ->
+            (activity as? MainActivity)?.showMiniPlayer(channel.name)
+        }
+
+        findNavController().popBackStack()
+    }
+
     private fun observeChannel() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
 
-                // ✅ Check if PlayerManager already has this channel playing (came from mini player)
                 val existingChannel = playerManager.currentChannel
                 if (existingChannel != null && existingChannel.id == args.channelId) {
-                    // ✅ SEAMLESS: Just attach the view — stream is already running
+                    // Seamless — stream already running, just attach view
                     currentChannel = existingChannel
                     attachPlayerView()
                     binding.tvChannelName.text = existingChannel.name
                     binding.progressBuffering.visibility = View.GONE
                 } else {
-                    // Started directly (e.g. from Favorites) — load channel and start fresh
                     viewModel.loadChannel(args.channelId)
                     viewModel.uiState.collect { state ->
                         state.currentChannel?.let { channel ->
@@ -181,14 +204,9 @@ class PlayerFragment : Fragment() {
             }
         }
 
-        // Register listener for buffering/error UI updates
         playerManager.addListener(playerListener)
     }
 
-    /**
-     * ✅ Attach the shared ExoPlayer to this fragment's PlayerView.
-     * The stream never stops — we're just switching which surface renders it.
-     */
     private fun attachPlayerView() {
         binding.playerView.player = playerManager.player
         applyZoomMode()
@@ -339,15 +357,6 @@ class PlayerFragment : Fragment() {
                 attachPlayerView()
             }
         }
-        requireActivity().onBackPressedDispatcher.addCallback(
-            viewLifecycleOwner, object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    // ✅ Do NOT stop the player — mini player will re-attach on back
-                    binding.playerView.player = null
-                    findNavController().popBackStack()
-                }
-            }
-        )
     }
 
     private fun wireCustomButtons() {
@@ -467,13 +476,11 @@ class PlayerFragment : Fragment() {
 
     override fun onPause() {
         super.onPause()
-        // ✅ Detach view only — stream keeps running in background
         binding.playerView.player = null
     }
 
     override fun onResume() {
         super.onResume()
-        // ✅ Re-attach view when coming back
         attachPlayerView()
     }
 
@@ -481,9 +488,9 @@ class PlayerFragment : Fragment() {
         super.onDestroyView()
         overlayHandler.removeCallbacksAndMessages(null)
         playerManager.removeListener(playerListener)
-        // ✅ Do NOT release the player here — it belongs to PlayerManager
         binding.playerView.player = null
-        exitPlayerMode()
+        // ✅ exitPlayerMode only called from navigateBack(), not here
+        // to avoid double-calling when fragment is destroyed after back press
         _binding = null
     }
 }
