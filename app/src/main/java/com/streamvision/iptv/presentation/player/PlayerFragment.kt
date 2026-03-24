@@ -56,7 +56,7 @@ class PlayerFragment : Fragment() {
 
     // ✅ Use activityViewModels to get the SAME ChannelsViewModel instance
     private val channelsViewModel: ChannelsViewModel by activityViewModels()
-    private val viewModel: PlayerViewModel by androidx.fragment.app.viewModels()
+    private val viewModel: PlayerViewModel by viewModels() // ✅ FIXED: removed fully qualified name
 
     private val args: PlayerFragmentArgs by navArgs()
 
@@ -487,3 +487,4 @@ class PlayerFragment : Fragment() {
         _binding = null
     }
 }
+
