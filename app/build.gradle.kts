@@ -8,12 +8,12 @@ plugins {
 
 android {
     namespace = "com.streamvision.iptv"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.streamvision.iptv"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
 
