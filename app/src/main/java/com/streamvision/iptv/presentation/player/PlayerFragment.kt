@@ -22,23 +22,16 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.viewModels
+import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.navigation.fragment.findNavController
@@ -46,6 +39,8 @@ import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
 import com.streamvision.iptv.domain.model.Channel
+import com.streamvision.iptv.player.PlayerManager
+import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -58,23 +53,28 @@ class PlayerFragment : Fragment() {
     private var _binding: FragmentPlayerBinding? = null
     private val binding get() = _binding!!
 
-    private val viewModel: PlayerViewModel by viewModels()
+    // ✅ Use activityViewModels to get the SAME ChannelsViewModel instance
+    private val channelsViewModel: ChannelsViewModel by activityViewModels()
+    private val viewModel: PlayerViewModel by androidx.fragment.app.viewModels()
+
     private val args: PlayerFragmentArgs by navArgs()
 
-    private var player: ExoPlayer? = null
+    // ✅ Shortcut to the shared player manager
+    private val playerManager: PlayerManager get() = channelsViewModel.playerManager
+
     private var currentChannel: Channel? = null
     private var isZoomFit = true
 
     private lateinit var audioManager: AudioManager
-    private var maxVolume  = 0
-    private var initVolume = 0
+    private var maxVolume    = 0
+    private var initVolume   = 0
     private var initBrightness = 0f
 
-    private var gestureStartY    = 0f
-    private var gestureStartX    = 0f
-    private var gestureType      = GestureType.NONE
+    private var gestureStartY     = 0f
+    private var gestureStartX     = 0f
+    private var gestureType       = GestureType.NONE
     private val GESTURE_THRESHOLD = 10f
-    private val BAR_TRACK_DP     = 120
+    private val BAR_TRACK_DP      = 120
 
     private val overlayHandler = Handler(Looper.getMainLooper())
     private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
@@ -85,6 +85,49 @@ class PlayerFragment : Fragment() {
     companion object {
         private const val TAG             = "PlayerFragment"
         private const val OVERLAY_HIDE_MS = 1500L
+    }
+
+    private val playerListener = object : Player.Listener {
+
+        override fun onTracksChanged(tracks: Tracks) {
+            val exo     = playerManager.player ?: return
+            val vGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            if (vGroups.isEmpty()) return
+            var bestG = vGroups[0]; var bestT = 0; var bestBps = -1
+            vGroups.forEach { g ->
+                for (ti in 0 until g.length) {
+                    val bps = g.getTrackFormat(ti).bitrate
+                    if (bps > bestBps) { bestBps = bps; bestG = g; bestT = ti }
+                }
+            }
+            if (!bestG.isTrackSelected(bestT)) {
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(bestG.mediaTrackGroup, bestT)).build()
+            }
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            when (state) {
+                Player.STATE_BUFFERING -> {
+                    binding.progressBuffering.visibility = View.VISIBLE
+                    viewModel.updatePlaybackState(isPlaying = false, isBuffering = true)
+                }
+                Player.STATE_READY -> {
+                    binding.progressBuffering.visibility = View.GONE
+                    viewModel.updatePlaybackState(isPlaying = playerManager.isPlaying, isBuffering = false)
+                }
+                else -> binding.progressBuffering.visibility = View.GONE
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            viewModel.updatePlaybackState(isPlaying = isPlaying)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            showError("${error.message}\n\nError Code: ${error.errorCode}")
+        }
     }
 
     override fun onCreateView(
@@ -104,8 +147,51 @@ class PlayerFragment : Fragment() {
         setupStaticListeners()
         setupGestures()
         setupControllerVisibilityListener()
-        observeState()
-        viewModel.loadChannel(args.channelId)
+        observeChannel()
+    }
+
+    private fun observeChannel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+
+                // ✅ Check if PlayerManager already has this channel playing (came from mini player)
+                val existingChannel = playerManager.currentChannel
+                if (existingChannel != null && existingChannel.id == args.channelId) {
+                    // ✅ SEAMLESS: Just attach the view — stream is already running
+                    currentChannel = existingChannel
+                    attachPlayerView()
+                    binding.tvChannelName.text = existingChannel.name
+                    binding.progressBuffering.visibility = View.GONE
+                } else {
+                    // Started directly (e.g. from Favorites) — load channel and start fresh
+                    viewModel.loadChannel(args.channelId)
+                    viewModel.uiState.collect { state ->
+                        state.currentChannel?.let { channel ->
+                            if (currentChannel?.id != channel.id) {
+                                currentChannel = channel
+                                playerManager.play(channel)
+                                attachPlayerView()
+                                binding.tvChannelName.text = channel.name
+                            }
+                        }
+                        if (state.error != null) showError(state.error)
+                    }
+                }
+            }
+        }
+
+        // Register listener for buffering/error UI updates
+        playerManager.addListener(playerListener)
+    }
+
+    /**
+     * ✅ Attach the shared ExoPlayer to this fragment's PlayerView.
+     * The stream never stops — we're just switching which surface renders it.
+     */
+    private fun attachPlayerView() {
+        binding.playerView.player = playerManager.player
+        applyZoomMode()
+        wireCustomButtons()
     }
 
     // -------------------------------------------------------------------------
@@ -114,10 +200,7 @@ class PlayerFragment : Fragment() {
 
     private fun enterPlayerMode() {
         val window = activity?.window ?: return
-
-        // ✅ Keep screen ON while player is active — prevents 30s screen timeout
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         window.statusBarColor     = Color.BLACK
         window.navigationBarColor = Color.BLACK
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -130,10 +213,7 @@ class PlayerFragment : Fragment() {
 
     private fun exitPlayerMode() {
         val window = activity?.window ?: return
-
-        // ✅ Remove keep-screen-on flag when leaving player
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowInsetsControllerCompat(window, requireView())
             .show(WindowInsetsCompat.Type.systemBars())
@@ -141,10 +221,6 @@ class PlayerFragment : Fragment() {
         window.statusBarColor     = Color.parseColor("#1E1E2E")
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
-
-    // -------------------------------------------------------------------------
-    // Controller visibility → sync channel name
-    // -------------------------------------------------------------------------
 
     private fun setupControllerVisibilityListener() {
         binding.playerView.setControllerVisibilityListener(
@@ -155,7 +231,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Gestures: left = brightness, right = volume
+    // Gestures
     // -------------------------------------------------------------------------
 
     private fun setupGestures() {
@@ -257,21 +333,21 @@ class PlayerFragment : Fragment() {
 
     private fun setupStaticListeners() {
         binding.btnRetry.setOnClickListener {
-            currentChannel?.let { ch -> releasePlayer(); setupAndPlay(ch) }
+            currentChannel?.let { ch ->
+                playerManager.play(ch)
+                attachPlayerView()
+            }
         }
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    releasePlayer()
+                    // ✅ Do NOT stop the player — mini player will re-attach on back
+                    binding.playerView.player = null
                     findNavController().popBackStack()
                 }
             }
         )
     }
-
-    // -------------------------------------------------------------------------
-    // Wire 3 custom buttons
-    // -------------------------------------------------------------------------
 
     private fun wireCustomButtons() {
         binding.playerView.post {
@@ -285,103 +361,11 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // State observer
-    // -------------------------------------------------------------------------
-
-    private fun observeState() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { state ->
-                    state.currentChannel?.let { channel ->
-                        if (currentChannel?.id != channel.id) {
-                            currentChannel = channel
-                            releasePlayer()
-                            setupAndPlay(channel)
-                        }
-                        binding.tvChannelName.text = channel.name
-                    }
-                    if (state.error != null) showError(state.error)
-                }
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Player setup
-    // -------------------------------------------------------------------------
-
-    private fun setupAndPlay(channel: Channel) {
-        binding.errorOverlay.visibility      = View.GONE
-        binding.progressBuffering.visibility = View.VISIBLE
-
-        val httpFactory   = buildHttpDataSourceFactory(channel)
-        val playerBuilder = ExoPlayer.Builder(requireContext())
-
-        if (!channel.drmKey.isNullOrBlank()) {
-            val drm = buildClearKeyDrmSessionManager(channel.drmKey)
-            playerBuilder.setMediaSourceFactory(
-                DefaultMediaSourceFactory(requireContext())
-                    .setDataSourceFactory(httpFactory)
-                    .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
-            )
-        } else {
-            playerBuilder.setMediaSourceFactory(
-                DefaultMediaSourceFactory(requireContext()).setDataSourceFactory(httpFactory)
-            )
-        }
-
-        player = playerBuilder.build().also { exo ->
-            binding.playerView.player = exo
-            exo.addListener(playerListener)
-            exo.setMediaItem(MediaItem.Builder().setUri(channel.url).build())
-            exo.prepare()
-            exo.playWhenReady = true
-        }
-
-        applyZoomMode()
-        wireCustomButtons()
-    }
-
-    // -------------------------------------------------------------------------
-    // HTTP headers
-    // -------------------------------------------------------------------------
-
-    private fun buildHttpDataSourceFactory(channel: Channel): DefaultHttpDataSource.Factory {
-        val h = mutableMapOf<String, String>()
-        if (!channel.userAgent.isNullOrBlank()) h["User-Agent"] = channel.userAgent
-        if (!channel.referer.isNullOrBlank())   h["Referer"]     = channel.referer
-        if (!channel.cookie.isNullOrBlank())    h["Cookie"]      = channel.cookie
-        return DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-            .setDefaultRequestProperties(h)
-    }
-
-    // -------------------------------------------------------------------------
-    // ClearKey DRM
-    // -------------------------------------------------------------------------
-
-    private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
-        return try {
-            val p = drmKey.trim().split(":")
-            if (p.size != 2) return null
-            val json = """{"keys":[{"kty":"oct","k":"${hexToBase64Url(p[1])}","kid":"${hexToBase64Url(p[0])}"}],"type":"temporary"}"""
-            DefaultDrmSessionManager.Builder()
-                .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                .setMultiSession(false)
-                .build(LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8)))
-        } catch (e: Exception) {
-            Log.e(TAG, "DRM setup failed: ${e.message}", e); null
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // Audio Track dialog
     // -------------------------------------------------------------------------
 
     private fun showAudioTrackDialog() {
-        val exo    = player ?: return
+        val exo    = playerManager.player ?: return
         val groups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (groups.isEmpty()) {
             AlertDialog.Builder(requireContext()).setTitle("Audio Track")
@@ -405,7 +389,7 @@ class PlayerFragment : Fragment() {
     // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
-        val exo     = player ?: return
+        val exo     = playerManager.player ?: return
         val vGroups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
         if (vGroups.isEmpty()) {
             AlertDialog.Builder(requireContext()).setTitle("Video Quality")
@@ -440,7 +424,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Zoom toggle
+    // Zoom
     // -------------------------------------------------------------------------
 
     private fun toggleZoom() {
@@ -454,53 +438,6 @@ class PlayerFragment : Fragment() {
         binding.playerView.resizeMode =
             if (isZoomFit) AspectRatioFrameLayout.RESIZE_MODE_FIT
             else           AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    }
-
-    // -------------------------------------------------------------------------
-    // Player listener
-    // -------------------------------------------------------------------------
-
-    private val playerListener = object : Player.Listener {
-
-        override fun onTracksChanged(tracks: Tracks) {
-            val exo     = player ?: return
-            val vGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-            if (vGroups.isEmpty()) return
-            var bestG = vGroups[0]; var bestT = 0; var bestBps = -1
-            vGroups.forEach { g ->
-                for (ti in 0 until g.length) {
-                    val bps = g.getTrackFormat(ti).bitrate
-                    if (bps > bestBps) { bestBps = bps; bestG = g; bestT = ti }
-                }
-            }
-            if (!bestG.isTrackSelected(bestT)) {
-                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(bestG.mediaTrackGroup, bestT)).build()
-            }
-        }
-
-        override fun onPlaybackStateChanged(state: Int) {
-            when (state) {
-                Player.STATE_BUFFERING -> {
-                    binding.progressBuffering.visibility = View.VISIBLE
-                    viewModel.updatePlaybackState(isPlaying = false, isBuffering = true)
-                }
-                Player.STATE_READY -> {
-                    binding.progressBuffering.visibility = View.GONE
-                    viewModel.updatePlaybackState(isPlaying = player?.isPlaying ?: false, isBuffering = false)
-                }
-                else -> binding.progressBuffering.visibility = View.GONE
-            }
-        }
-
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            viewModel.updatePlaybackState(isPlaying = isPlaying)
-        }
-
-        override fun onPlayerError(error: PlaybackException) {
-            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
-            showError("${error.message}\n\nError Code: ${error.errorCode}")
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -523,25 +460,28 @@ class PlayerFragment : Fragment() {
         }
     }
 
-    private fun releasePlayer() {
-        player?.removeListener(playerListener)
-        player?.release()
-        player = null
-    }
-
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
 
     override fun onPause() {
         super.onPause()
-        player?.pause()
+        // ✅ Detach view only — stream keeps running in background
+        binding.playerView.player = null
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // ✅ Re-attach view when coming back
+        attachPlayerView()
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
         overlayHandler.removeCallbacksAndMessages(null)
-        releasePlayer()
+        playerManager.removeListener(playerListener)
+        // ✅ Do NOT release the player here — it belongs to PlayerManager
+        binding.playerView.player = null
         exitPlayerMode()
         _binding = null
     }
