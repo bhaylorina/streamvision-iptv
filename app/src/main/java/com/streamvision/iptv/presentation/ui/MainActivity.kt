@@ -45,14 +45,11 @@ class MainActivity : AppCompatActivity() {
         navController.addOnDestinationChangedListener { _, destination, _ ->
             when (destination.id) {
                 R.id.playerFragment -> {
-                    // Player screen: hide nav bar and remove bottom margin
-                    // so the fragment fills the FULL screen with zero gap
                     binding.bottomNavigation.visibility = View.GONE
                     binding.miniPlayer.root.visibility = View.GONE
                     setNavHostBottomMargin(0)
                 }
                 else -> {
-                    // All other screens: show nav bar and restore 56dp margin
                     binding.bottomNavigation.visibility = View.VISIBLE
                     setNavHostBottomMargin(56)
                 }
@@ -60,10 +57,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Dynamically sets the bottom margin of the NavHostFragment container.
-     * @param dp margin in dp (0 for player, 56 for all other screens)
-     */
     private fun setNavHostBottomMargin(dp: Int) {
         val px = (dp * resources.displayMetrics.density).toInt()
         val params = binding.navHostFragment.layoutParams as ViewGroup.MarginLayoutParams
@@ -83,10 +76,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ✅ tvMiniStatus references hata diye (ab ye field nahi hai)
     fun showMiniPlayer(channelName: String) {
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channelName
-        binding.miniPlayer.tvMiniStatus.text = "Playing"
     }
 
     fun hideMiniPlayer() {
