@@ -12,12 +12,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -41,16 +36,30 @@ class ChannelsFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: ChannelsViewModel by activityViewModels()
-    
+
     private lateinit var channelAdapter: ChannelAdapter
-    private lateinit var playlistAdapter: PlaylistAdapter 
-    
+    private lateinit var playlistAdapter: PlaylistAdapter
+
     private var searchJob: Job? = null
-    private var currentPlayingChannel: Channel? = null
-    private var exoPlayer: ExoPlayer? = null
 
     private val backCallback = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() {            viewModel.clearCurrentPlaylist()
+        override fun handleOnBackPressed() {
+            viewModel.clearCurrentPlaylist()
+        }
+    }
+
+    // ✅ Listener to sync play/pause button with player state
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            binding.miniPlayer.btnMiniPlayPause.setImageResource(
+                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+            )
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_BUFFERING) {
+                // Optionally show a small progress in mini player
+            }
         }
     }
 
@@ -76,55 +85,90 @@ class ChannelsFragment : Fragment() {
         setupAddPlaylistButton()
         setupSwipeRefresh()
         observeUiState()
+
+        // ✅ Register listener on the shared player
+        viewModel.playerManager.addListener(playerListener)
+
+        // ✅ If a channel is already playing (came back from fullscreen), restore mini player UI
+        viewModel.playerManager.currentChannel?.let { channel ->
+            showMiniPlayer(channel)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.refreshPlaylists()
-        if (exoPlayer != null && currentPlayingChannel != null) {
-            exoPlayer?.play()
+
+        // ✅ Re-attach PlayerView to the shared player instance when returning from fullscreen
+        viewModel.playerManager.player?.let { exo ->
+            binding.miniPlayer.miniPlayerView.player = exo
+        }
+
+        // ✅ Restore mini player visibility if something is playing
+        viewModel.playerManager.currentChannel?.let { channel ->
+            showMiniPlayer(channel)
         }
     }
 
     override fun onPause() {
         super.onPause()
-        exoPlayer?.pause()
+        // ✅ Detach view only — do NOT stop or release the player
+        binding.miniPlayer.miniPlayerView.player = null
     }
 
     private fun setupMiniPlayer() {
         binding.miniPlayer.root.visibility = View.GONE
-        
-        exoPlayer = ExoPlayer.Builder(requireContext()).build()
-        binding.miniPlayer.miniPlayerView.player = exoPlayer
-        
+
         binding.miniPlayer.btnMiniFullscreen.setOnClickListener {
-            currentPlayingChannel?.let { channel ->
-                navigateToPlayer(channel.id)            }
-        }
-        
-        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
-            exoPlayer?.let { player ->
-                if (player.isPlaying) {
-                    player.pause()
-                    binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_play)
-                } else {
-                    player.play()
-                    binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)
-                }
-            }
-        }
-        
-        binding.miniPlayer.btnMiniClose.setOnClickListener {
-            exoPlayer?.stop()
-            binding.miniPlayer.root.visibility = View.GONE
-            currentPlayingChannel = null
-        }
-        
-        binding.miniPlayer.miniPlayerView.setOnClickListener {
-            currentPlayingChannel?.let { channel ->
+            viewModel.playerManager.currentChannel?.let { channel ->
+                // ✅ Detach from mini player view BEFORE navigating
+                // The stream keeps playing — PlayerFragment will attach its own view
+                binding.miniPlayer.miniPlayerView.player = null
                 navigateToPlayer(channel.id)
             }
         }
+
+        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
+            val pm = viewModel.playerManager
+            if (pm.isPlaying) {
+                pm.pause()
+                binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_play)
+            } else {
+                pm.resume()
+                binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)
+            }
+        }
+
+        binding.miniPlayer.btnMiniClose.setOnClickListener {
+            // ✅ Full stop — user explicitly closed the player
+            viewModel.playerManager.stop()
+            binding.miniPlayer.root.visibility = View.GONE
+        }
+
+        binding.miniPlayer.miniPlayerView.setOnClickListener {
+            viewModel.playerManager.currentChannel?.let { channel ->
+                binding.miniPlayer.miniPlayerView.player = null
+                navigateToPlayer(channel.id)
+            }
+        }
+    }
+
+    private fun playInMiniPlayer(channel: Channel) {
+        // ✅ Tell PlayerManager to play — it handles create/reuse of ExoPlayer
+        viewModel.playerManager.play(channel)
+
+        // ✅ Attach the shared player to the mini player view
+        binding.miniPlayer.miniPlayerView.player = viewModel.playerManager.player
+
+        showMiniPlayer(channel)
+    }
+
+    private fun showMiniPlayer(channel: Channel) {
+        binding.miniPlayer.root.visibility = View.VISIBLE
+        binding.miniPlayer.tvMiniTitle.text = channel.name
+        binding.miniPlayer.btnMiniPlayPause.setImageResource(
+            if (viewModel.playerManager.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        )
     }
 
     private fun setupPlaylistRecyclerView() {
@@ -132,7 +176,7 @@ class ChannelsFragment : Fragment() {
             onPlaylistClick = { playlist ->
                 viewModel.selectPlaylist(playlist.id)
             },
-            onDeleteClick = { playlist ->
+            onDeleteClick = { _ ->
                 Snackbar.make(binding.root, "Delete playlist from Settings screen", Snackbar.LENGTH_SHORT).show()
             }
         )
@@ -148,46 +192,13 @@ class ChannelsFragment : Fragment() {
                 viewModel.onChannelSelected(channel.id)
                 playInMiniPlayer(channel)
             },
-            onFavoriteClick = { channel ->                viewModel.toggleFavorite(channel.id)
+            onFavoriteClick = { channel ->
+                viewModel.toggleFavorite(channel.id)
             }
         )
         binding.rvChannels.apply {
             adapter = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
-        }
-    }
-
-    private fun playInMiniPlayer(channel: Channel) {
-        currentPlayingChannel = channel
-        
-        binding.miniPlayer.root.visibility = View.VISIBLE
-        binding.miniPlayer.tvMiniTitle.text = channel.name
-        
-        exoPlayer?.let { player ->
-            // ✅ FIX: Pass HTTP headers (User-Agent, Referer, Cookie) like full-screen player
-            val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(15_000)
-            
-            // Add headers if available
-            val headers = mutableMapOf<String, String>()
-            if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
-            if (!channel.referer.isNullOrBlank()) headers["Referer"] = channel.referer
-            if (!channel.cookie.isNullOrBlank()) headers["Cookie"] = channel.cookie
-            
-            if (headers.isNotEmpty()) {
-                httpDataSourceFactory.setDefaultRequestProperties(headers)
-            }
-            
-            val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(requireContext(), httpDataSourceFactory)
-            val mediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(channel.url))
-            
-            player.setMediaSource(mediaSource)
-            player.prepare()
-            player.play()
-            binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)
         }
     }
 
@@ -212,11 +223,8 @@ class ChannelsFragment : Fragment() {
     }
 
     private fun setupAddPlaylistButton() {
-        binding.btnAddPlaylist.setOnClickListener {
-            showAddPlaylistDialog()
-        }
-        binding.btnAddFirstPlaylist.setOnClickListener {            showAddPlaylistDialog()
-        }
+        binding.btnAddPlaylist.setOnClickListener { showAddPlaylistDialog() }
+        binding.btnAddFirstPlaylist.setOnClickListener { showAddPlaylistDialog() }
     }
 
     private fun setupSwipeRefresh() {
@@ -250,21 +258,26 @@ class ChannelsFragment : Fragment() {
 
         binding.headerPlaylist.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.miniPlayer.root.visibility = if (isShowingChannels && currentPlayingChannel != null) View.VISIBLE else View.GONE
+
+        // ✅ Mini player visibility controlled by whether something is playing
+        val hasActivePlaying = viewModel.playerManager.currentChannel != null
+        binding.miniPlayer.root.visibility =
+            if (isShowingChannels && hasActivePlaying) View.VISIBLE else View.GONE
 
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
+        binding.chipGroup.visibility =
+            if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
 
-        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
+        binding.emptyState.visibility =
+            if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty())
+                View.VISIBLE else View.GONE
 
         binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
-        binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
+        binding.tvNoPlaylists.visibility =
+            if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
-        if (!isShowingChannels) {            playlistAdapter.submitList(state.playlists)
+        if (!isShowingChannels) {
+            playlistAdapter.submitList(state.playlists)
         } else {
             channelAdapter.submitList(state.filteredChannels)
             updateGroupChips(state.groups, state.selectedGroup)
@@ -278,9 +291,7 @@ class ChannelsFragment : Fragment() {
 
     private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
         val chipGroup = binding.chipGroup
-        while (chipGroup.childCount > 1) {
-            chipGroup.removeViewAt(1)
-        }
+        while (chipGroup.childCount > 1) chipGroup.removeViewAt(1)
         binding.chipAll.isChecked = selectedGroup == null
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
@@ -307,8 +318,9 @@ class ChannelsFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        exoPlayer?.release()
-        exoPlayer = null
+        // ✅ Detach view and remove listener — do NOT release the player
+        binding.miniPlayer.miniPlayerView.player = null
+        viewModel.playerManager.removeListener(playerListener)
         _binding = null
         searchJob?.cancel()
     }
