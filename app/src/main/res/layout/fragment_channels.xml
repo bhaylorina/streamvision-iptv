@@ -14,10 +14,40 @@
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Search bar (below MiniPlayer) -->
+    <!-- ✅ Header for Playlist Screen (with + button) -->
+    <LinearLayout
+        android:id="@+id/header_playlist"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="16dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/mini_player">
+
+        <TextView
+            android:id="@+id/tv_playlist_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/playlists"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_add_playlist"
+            style="@style/Widget.Material3.Button.IconButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:icon="@drawable/ic_add"
+            app:iconTint="@color/primary_accent" />
+
+    </LinearLayout>
+
+    <!-- ✅ Search bar -->
     <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/search_layout"
-        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+        android:id="@+id/search_layout"        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="16dp"
@@ -28,7 +58,7 @@
         app:hintTextColor="@color/text_secondary"
         app:startIconDrawable="@drawable/ic_search"
         app:startIconTint="@color/text_secondary"
-        app:layout_constraintTop_toBottomOf="@id/mini_player">
+        app:layout_constraintTop_toBottomOf="@id/header_playlist">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/et_search"
@@ -41,13 +71,14 @@
 
     </com.google.android.material.textfield.TextInputLayout>
 
-    <!-- Group filter chips -->
+    <!-- ✅ Group filter chips -->
     <HorizontalScrollView
         android:id="@+id/scroll_groups"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        android:scrollbars="none"        android:visibility="gone"
+        android:scrollbars="none"
+        android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/search_layout">
 
         <com.google.android.material.chip.ChipGroup
@@ -66,12 +97,11 @@
                 android:text="@string/all_channels"
                 app:chipBackgroundColor="@color/surface"
                 app:checkedIconTint="@color/primary_accent" />
-
         </com.google.android.material.chip.ChipGroup>
 
     </HorizontalScrollView>
 
-    <!-- SwipeRefreshLayout with channel list -->
+    <!-- ✅ SwipeRefreshLayout with channel list -->
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipe_refresh"
         android:layout_width="match_parent"
@@ -96,7 +126,8 @@
             <!-- Channels RecyclerView -->
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rv_channels"
-                android:layout_width="match_parent"                android:layout_height="match_parent"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
                 android:clipToPadding="false"
                 android:paddingHorizontal="16dp"
                 android:paddingBottom="16dp"
@@ -114,8 +145,7 @@
 
                 <ImageView
                     android:layout_width="120dp"
-                    android:layout_height="120dp"
-                    android:src="@drawable/ic_no_channels"
+                    android:layout_height="120dp"                    android:src="@drawable/ic_no_channels"
                     app:tint="@color/text_tertiary" />
 
                 <TextView
@@ -145,6 +175,7 @@
                 android:gravity="center"
                 android:orientation="vertical"
                 android:visibility="gone">
+
                 <ImageView
                     android:layout_width="120dp"
                     android:layout_height="120dp"
@@ -163,8 +194,7 @@
 
             <!-- Loading indicator -->
             <ProgressBar
-                android:id="@+id/progress_bar"
-                android:layout_width="wrap_content"
+                android:id="@+id/progress_bar"                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
                 android:visibility="gone" />
