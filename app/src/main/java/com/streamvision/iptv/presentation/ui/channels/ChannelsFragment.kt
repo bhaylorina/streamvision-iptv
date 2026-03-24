@@ -12,6 +12,9 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -41,12 +44,13 @@ class ChannelsFragment : Fragment() {
     
     private var searchJob: Job? = null
     private var currentPlayingChannel: Channel? = null
+    private var exoPlayer: ExoPlayer? = null
 
     private val backCallback = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() {
-            viewModel.clearCurrentPlaylist()
+        override fun handleOnBackPressed() {            viewModel.clearCurrentPlaylist()
         }
     }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -66,7 +70,7 @@ class ChannelsFragment : Fragment() {
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
-        setupAddPlaylistButton() // ✅ Add Playlist button setup
+        setupAddPlaylistButton()
         setupSwipeRefresh()
         observeUiState()
     }
@@ -74,21 +78,53 @@ class ChannelsFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshPlaylists()
+        // Resume player if exists
+        if (exoPlayer != null && currentPlayingChannel != null) {
+            exoPlayer?.play()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Pause player but don't release
+        exoPlayer?.pause()
     }
 
     private fun setupMiniPlayer() {
         binding.miniPlayer.root.visibility = View.GONE
         
-        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
-            // Play/Pause toggle
+        // Initialize ExoPlayer
+        exoPlayer = ExoPlayer.Builder(requireContext()).build()
+        binding.miniPlayer.miniPlayerView.player = exoPlayer
+                // Fullscreen button
+        binding.miniPlayer.btnMiniFullscreen.setOnClickListener {
+            currentPlayingChannel?.let { channel ->
+                navigateToPlayer(channel.id)
+            }
         }
         
+        // Play/Pause button
+        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
+            exoPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.pause()
+                    binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_play)
+                } else {
+                    player.play()
+                    binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)
+                }
+            }
+        }
+        
+        // Close button
         binding.miniPlayer.btnMiniClose.setOnClickListener {
+            exoPlayer?.stop()
             binding.miniPlayer.root.visibility = View.GONE
             currentPlayingChannel = null
         }
         
-        binding.miniPlayer.root.setOnClickListener {
+        // Tap on video → Fullscreen
+        binding.miniPlayer.miniPlayerView.setOnClickListener {
             currentPlayingChannel?.let { channel ->
                 navigateToPlayer(channel.id)
             }
@@ -96,7 +132,8 @@ class ChannelsFragment : Fragment() {
     }
 
     private fun setupPlaylistRecyclerView() {
-        playlistAdapter = PlaylistAdapter(            onPlaylistClick = { playlist ->
+        playlistAdapter = PlaylistAdapter(
+            onPlaylistClick = { playlist ->
                 viewModel.selectPlaylist(playlist.id)
             },
             onDeleteClick = { playlist ->
@@ -108,7 +145,6 @@ class ChannelsFragment : Fragment() {
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
-
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
@@ -125,12 +161,21 @@ class ChannelsFragment : Fragment() {
         }
     }
 
+    // ✅ MiniPlayer mein video chalane ka function
     private fun playInMiniPlayer(channel: Channel) {
         currentPlayingChannel = channel
         
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channel.name
-        binding.miniPlayer.tvMiniStatus.text = "Playing"
+        
+        // Setup ExoPlayer with channel URL
+        exoPlayer?.let { player ->
+            val mediaItem = MediaItem.fromUri(channel.streamUrl)
+            player.setMediaItem(mediaItem)
+            player.prepare()
+            player.play()
+            binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)
+        }
     }
 
     private fun setupSearch() {
@@ -146,14 +191,16 @@ class ChannelsFragment : Fragment() {
             }
         })
     }
+
     private fun setupGroupChipAll() {
         binding.chipAll.setOnClickListener {
-            viewModel.setSelectedGroup(null)
-        }
+            viewModel.setSelectedGroup(null)        }
     }
 
-    // ✅ Add Playlist Button Setup (Empty State)
     private fun setupAddPlaylistButton() {
+        binding.btnAddPlaylist.setOnClickListener {
+            showAddPlaylistDialog()
+        }
         binding.btnAddFirstPlaylist.setOnClickListener {
             showAddPlaylistDialog()
         }
@@ -188,14 +235,15 @@ class ChannelsFragment : Fragment() {
 
         backCallback.isEnabled = isShowingChannels
 
+        binding.headerPlaylist.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.miniPlayer.root.visibility = if (isShowingChannels && currentPlayingChannel != null) View.VISIBLE else View.GONE
 
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
 
-        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {            View.VISIBLE
-        } else {
+        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
+            View.VISIBLE        } else {
             View.GONE
         }
 
@@ -243,8 +291,10 @@ class ChannelsFragment : Fragment() {
             viewModel.addPlaylist(name, url)
         }.show(parentFragmentManager, "AddPlaylistDialog")
     }
-    override fun onDestroyView() {
-        super.onDestroyView()
+
+    override fun onDestroyView() {        super.onDestroyView()
+        exoPlayer?.release()
+        exoPlayer = null
         _binding = null
         searchJob?.cancel()
     }
