@@ -19,7 +19,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
-import com.streamvision.iptv.presentation.adapter.PlaylistAdapter // ✅ Import add kiya
+import com.streamvision.iptv.presentation.adapter.PlaylistAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -35,7 +35,6 @@ class ChannelsFragment : Fragment() {
 
     private val viewModel: ChannelsViewModel by activityViewModels()
     
-    // ✅ Dono adapters initialize kiye
     private lateinit var channelAdapter: ChannelAdapter
     private lateinit var playlistAdapter: PlaylistAdapter 
     
@@ -47,8 +46,8 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    override fun onCreateView(        inflater: LayoutInflater,
-        container: ViewGroup?,
+    override fun onCreateView(
+        inflater: LayoutInflater,        container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentChannelsBinding.inflate(inflater, container, false)
@@ -60,7 +59,7 @@ class ChannelsFragment : Fragment() {
 
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
-        setupPlaylistRecyclerView() // ✅ Playlist setup add kiya
+        setupPlaylistRecyclerView()
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
@@ -74,11 +73,15 @@ class ChannelsFragment : Fragment() {
         viewModel.refreshPlaylists()
     }
 
-    // ✅ Nayi function: Playlist RecyclerView setup
+    // ✅ FIX: Adapter ko dono callbacks de rahe hain
     private fun setupPlaylistRecyclerView() {
         playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist ->
-                viewModel.selectPlaylist(playlist.id) // ✅ Click karne par channels load honge
+                viewModel.selectPlaylist(playlist.id)
+            },
+            onDeleteClick = { playlist ->
+                // Abhi ke liye bas message dikhayenge (Delete logic Settings mein hai)
+                Snackbar.make(binding.root, "Delete playlist from Settings screen", Snackbar.LENGTH_SHORT).show()
             }
         )
         binding.rvPlaylists.apply {
@@ -93,10 +96,10 @@ class ChannelsFragment : Fragment() {
                 viewModel.onChannelSelected(channel.id)
                 navigateToPlayer(channel.id)
             },
-            onFavoriteClick = { channel ->
-                viewModel.toggleFavorite(channel.id)
+            onFavoriteClick = { channel ->                viewModel.toggleFavorite(channel.id)
             }
-        )        binding.rvChannels.apply {
+        )
+        binding.rvChannels.apply {
             adapter = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
@@ -142,10 +145,10 @@ class ChannelsFragment : Fragment() {
             } else {
                 binding.swipeRefresh.isRefreshing = false
             }
-        }
-    }
+        }    }
 
-    private fun observeUiState() {        viewLifecycleOwner.lifecycleScope.launch {
+    private fun observeUiState() {
+        viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     renderState(state)
@@ -168,7 +171,6 @@ class ChannelsFragment : Fragment() {
             getString(R.string.playlists)
         }
 
-        // Channels View Logic
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.etSearch.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.btnBackToPlaylists.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
@@ -180,11 +182,9 @@ class ChannelsFragment : Fragment() {
             View.GONE
         }
 
-        // ✅ Playlists View Logic (Fix kiya gaya)
         binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
-        // ✅ Data Adapter ko bheja (Ye pehle missing tha)
         if (!isShowingChannels) {
             playlistAdapter.submitList(state.playlists)
         } else {
