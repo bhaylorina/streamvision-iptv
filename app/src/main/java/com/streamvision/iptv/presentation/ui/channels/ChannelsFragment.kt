@@ -66,6 +66,7 @@ class ChannelsFragment : Fragment() {
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
+        setupAddPlaylistButton() // ✅ Add Playlist button setup
         setupSwipeRefresh()
         observeUiState()
     }
@@ -75,12 +76,11 @@ class ChannelsFragment : Fragment() {
         viewModel.refreshPlaylists()
     }
 
-    // ✅ MiniPlayer Setup
     private fun setupMiniPlayer() {
         binding.miniPlayer.root.visibility = View.GONE
         
         binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
-            // Play/Pause toggle - abhi ke liye empty
+            // Play/Pause toggle
         }
         
         binding.miniPlayer.btnMiniClose.setOnClickListener {
@@ -89,15 +89,14 @@ class ChannelsFragment : Fragment() {
         }
         
         binding.miniPlayer.root.setOnClickListener {
-            // Full screen jaane ke liye
             currentPlayingChannel?.let { channel ->
                 navigateToPlayer(channel.id)
             }
         }
     }
 
-    private fun setupPlaylistRecyclerView() {        playlistAdapter = PlaylistAdapter(
-            onPlaylistClick = { playlist ->
+    private fun setupPlaylistRecyclerView() {
+        playlistAdapter = PlaylistAdapter(            onPlaylistClick = { playlist ->
                 viewModel.selectPlaylist(playlist.id)
             },
             onDeleteClick = { playlist ->
@@ -126,15 +125,12 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    // ✅ MiniPlayer mein channel chalane ka function
     private fun playInMiniPlayer(channel: Channel) {
         currentPlayingChannel = channel
         
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channel.name
         binding.miniPlayer.tvMiniStatus.text = "Playing"
-        
-        // Logo load kar sakte ho baad mein
     }
 
     private fun setupSearch() {
@@ -145,18 +141,23 @@ class ChannelsFragment : Fragment() {
                 searchJob?.cancel()
                 searchJob = viewLifecycleOwner.lifecycleScope.launch {
                     delay(300)
-                    viewModel.setSearchQuery(s?.toString() ?: "")                }
+                    viewModel.setSearchQuery(s?.toString() ?: "")
+                }
             }
         })
     }
-
     private fun setupGroupChipAll() {
         binding.chipAll.setOnClickListener {
             viewModel.setSelectedGroup(null)
         }
     }
 
-    // ✅ setupButtons() hata diya kyunki buttons hi nahi hain ab
+    // ✅ Add Playlist Button Setup (Empty State)
+    private fun setupAddPlaylistButton() {
+        binding.btnAddFirstPlaylist.setOnClickListener {
+            showAddPlaylistDialog()
+        }
+    }
 
     private fun setupSwipeRefresh() {
         binding.swipeRefresh.setOnRefreshListener {
@@ -187,7 +188,6 @@ class ChannelsFragment : Fragment() {
 
         backCallback.isEnabled = isShowingChannels
 
-        // ✅ Search aur MiniPlayer visibility
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.miniPlayer.root.visibility = if (isShowingChannels && currentPlayingChannel != null) View.VISIBLE else View.GONE
 
