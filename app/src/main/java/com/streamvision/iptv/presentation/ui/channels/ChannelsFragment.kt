@@ -61,12 +61,11 @@ class ChannelsFragment : Fragment() {
 
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
-        setupMiniPlayer() // ✅ MiniPlayer setup
+        setupMiniPlayer()
         setupPlaylistRecyclerView()
         setupChannelRecyclerView()
         setupSearch()
         setupGroupChipAll()
-        setupButtons()
         setupSwipeRefresh()
         observeUiState()
     }
@@ -81,7 +80,7 @@ class ChannelsFragment : Fragment() {
         binding.miniPlayer.root.visibility = View.GONE
         
         binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
-            // Play/Pause toggle
+            // Play/Pause toggle - abhi ke liye empty
         }
         
         binding.miniPlayer.btnMiniClose.setOnClickListener {
@@ -96,8 +95,8 @@ class ChannelsFragment : Fragment() {
             }
         }
     }
-    private fun setupPlaylistRecyclerView() {
-        playlistAdapter = PlaylistAdapter(
+
+    private fun setupPlaylistRecyclerView() {        playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist ->
                 viewModel.selectPlaylist(playlist.id)
             },
@@ -115,7 +114,7 @@ class ChannelsFragment : Fragment() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel ->
                 viewModel.onChannelSelected(channel.id)
-                playInMiniPlayer(channel) // ✅ MiniPlayer mein chalao
+                playInMiniPlayer(channel)
             },
             onFavoriteClick = { channel ->
                 viewModel.toggleFavorite(channel.id)
@@ -135,8 +134,7 @@ class ChannelsFragment : Fragment() {
         binding.miniPlayer.tvMiniTitle.text = channel.name
         binding.miniPlayer.tvMiniStatus.text = "Playing"
         
-        // Logo load karo (Coil use kar sakte ho)
-        // coil.load(channel.logoUrl).into(binding.miniPlayer.ivMiniLogo)
+        // Logo load kar sakte ho baad mein
     }
 
     private fun setupSearch() {
@@ -145,9 +143,9 @@ class ChannelsFragment : Fragment() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 searchJob?.cancel()
-                searchJob = viewLifecycleOwner.lifecycleScope.launch {                    delay(300)
-                    viewModel.setSearchQuery(s?.toString() ?: "")
-                }
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(300)
+                    viewModel.setSearchQuery(s?.toString() ?: "")                }
             }
         })
     }
@@ -158,17 +156,7 @@ class ChannelsFragment : Fragment() {
         }
     }
 
-    private fun setupButtons() {
-        binding.btnBackToPlaylists.setOnClickListener {
-            viewModel.clearCurrentPlaylist()
-        }
-        binding.btnAddPlaylist.setOnClickListener {
-            showAddPlaylistDialog()
-        }
-        binding.btnAddFirstPlaylist.setOnClickListener {
-            showAddPlaylistDialog()
-        }
-    }
+    // ✅ setupButtons() hata diya kyunki buttons hi nahi hain ab
 
     private fun setupSwipeRefresh() {
         binding.swipeRefresh.setOnRefreshListener {
@@ -194,20 +182,19 @@ class ChannelsFragment : Fragment() {
     private fun renderState(state: ChannelsUiState) {
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = state.isLoading
+
         val isShowingChannels = state.currentPlaylist != null
 
         backCallback.isEnabled = isShowingChannels
 
-        // ✅ Search aur MiniPlayer hamesha dikhao jab channels ho
+        // ✅ Search aur MiniPlayer visibility
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.miniPlayer.root.visibility = if (isShowingChannels && currentPlayingChannel != null) View.VISIBLE else View.GONE
 
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.btnBackToPlaylists.visibility = View.GONE // ✅ Hata diya
         binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
 
-        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {
-            View.VISIBLE
+        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) {            View.VISIBLE
         } else {
             View.GONE
         }
@@ -243,7 +230,8 @@ class ChannelsFragment : Fragment() {
                 setOnClickListener { viewModel.setSelectedGroup(group) }
             }
             chipGroup.addView(chip)
-        }    }
+        }
+    }
 
     private fun navigateToPlayer(channelId: Long) {
         val bundle = Bundle().apply { putLong("channelId", channelId) }
@@ -255,7 +243,6 @@ class ChannelsFragment : Fragment() {
             viewModel.addPlaylist(name, url)
         }.show(parentFragmentManager, "AddPlaylistDialog")
     }
-
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
