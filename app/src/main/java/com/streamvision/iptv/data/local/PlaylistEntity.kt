@@ -9,5 +9,6 @@ data class PlaylistEntity(
     val id: Long = 0,
     val name: String,
     val url: String,
+    val channelCount: Int = 0, // ✅ Ye field add kiya
     val createdAt: Long = System.currentTimeMillis()
 )
