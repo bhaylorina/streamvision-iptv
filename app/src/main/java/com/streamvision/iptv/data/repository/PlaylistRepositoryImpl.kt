@@ -11,7 +11,6 @@ import com.streamvision.iptv.domain.repository.ChannelRepository
 import com.streamvision.iptv.domain.repository.PlaylistRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -28,7 +27,6 @@ class PlaylistRepositoryImpl @Inject constructor(
     private val channelRepository: ChannelRepository
 ) : PlaylistRepository {
 
-    // ✅ FIX: Ab Channel table ko bhi observe karega
     override fun getAllPlaylists(): Flow<List<Playlist>> {
         return playlistDao.getAllPlaylists().map { entities ->
             entities.map { entity ->
@@ -42,19 +40,19 @@ class PlaylistRepositoryImpl @Inject constructor(
         return playlistDao.getPlaylistById(id)?.toDomain()
     }
 
-    // ✅ FIX: Channels save karne ke baad playlist update karega
     override suspend fun addPlaylist(name: String, url: String): Long {
-        val channels = fetchAndParsePlaylist(url)
-        
+        // ✅ FIX: Insert playlist FIRST to get the real ID
         val playlistEntity = PlaylistEntity(name = name, url = url)
-        val playlistId = playlistDao.insertPlaylist(playlistEntity)        
+        val playlistId = playlistDao.insertPlaylist(playlistEntity)
+
+        // ✅ FIX: Parse with the real playlistId (not hardcoded 0)
+        val channels = fetchAndParsePlaylist(url, playlistId)
+
         if (channels.isNotEmpty()) {
             channelRepository.saveChannels(channels, playlistId)
-            
-            // ✅ NEW: Channel count update karo playlist mein
             playlistDao.updateChannelCount(playlistId, channels.size)
         }
-        
+
         return playlistId
     }
 
@@ -67,19 +65,21 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.deletePlaylistById(id)
     }
 
-    suspend fun fetchAndParsePlaylist(url: String): List<Channel> = withContext(Dispatchers.IO) {
-        try {
-            val content = fetchUrlContent(url)
-            if (M3UParser.isValidM3U(content)) {
-                M3UParser.parse(content, playlistId = 0)
-            } else {
+    suspend fun fetchAndParsePlaylist(url: String, playlistId: Long = 0): List<Channel> =
+        withContext(Dispatchers.IO) {
+            try {
+                val content = fetchUrlContent(url)
+                if (M3UParser.isValidM3U(content)) {
+                    // ✅ FIX: Pass the real playlistId here
+                    M3UParser.parse(content, playlistId = playlistId)
+                } else {
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
                 emptyList()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
         }
-    }
 
     private fun fetchUrlContent(urlString: String): String {
         val url = URL(urlString)
@@ -88,7 +88,7 @@ class PlaylistRepositoryImpl @Inject constructor(
         connection.setRequestProperty("User-Agent", "StreamVisionIPTV/1.0")
         connection.connectTimeout = 15000
         connection.readTimeout = 15000
-        
+
         return try {
             connection.responseCode.let { code ->
                 if (code == HttpURLConnection.HTTP_OK) {
@@ -96,7 +96,8 @@ class PlaylistRepositoryImpl @Inject constructor(
                         reader.readText()
                     }
                 } else {
-                    throw Exception("HTTP error: $code")                }
+                    throw Exception("HTTP error: $code")
+                }
             }
         } finally {
             connection.disconnect()
