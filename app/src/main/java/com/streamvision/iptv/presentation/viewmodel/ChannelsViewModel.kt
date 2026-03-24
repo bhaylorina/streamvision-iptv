@@ -19,6 +19,7 @@ data class ChannelsUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val currentPlaylist: Playlist? = null,
+    val playlists: List<Playlist> = emptyList(), // ✅ Ye line add ki hai
     val playlistsLoaded: Boolean = false,
     val hasNoPlaylists: Boolean = false
 )
@@ -46,7 +47,7 @@ class ChannelsViewModel @Inject constructor(
             getPlaylistsUseCase()
                 .onEach { playlists ->
                     _uiState.update {
-                        it.copy(
+                        it.copy(                            playlists = playlists, // ✅ Data state mein save kar rahe hain
                             playlistsLoaded = true,
                             hasNoPlaylists = playlists.isEmpty()
                         )
@@ -58,6 +59,11 @@ class ChannelsViewModel @Inject constructor(
 
     fun refreshPlaylists() {
         loadPlaylists()
+    }
+
+    // ✅ Ye function Fragment use karega playlist select karne ke liye
+    fun selectPlaylist(playlistId: Long) {
+        loadChannels(playlistId)
     }
 
     fun loadChannels(playlistId: Long) {
@@ -90,8 +96,7 @@ class ChannelsViewModel @Inject constructor(
             getChannelGroupsUseCase(playlistId).collect { groups ->
                 _uiState.update { it.copy(groups = groups) }
             }
-        }
-    }
+        }    }
 
     fun setSelectedGroup(group: String?) {
         _uiState.update { state ->
@@ -140,8 +145,7 @@ class ChannelsViewModel @Inject constructor(
             it.copy(
                 currentPlaylist = null,
                 searchQuery = "",
-                selectedGroup = null
-            )
+                selectedGroup = null            )
         }
     }
 
