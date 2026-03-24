@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
         navController.addOnDestinationChangedListener { _, destination, _ ->
             when (destination.id) {
                 R.id.playerFragment -> {
+                    // Full screen player — hide everything
                     binding.bottomNavigation.visibility = View.GONE
                     binding.miniPlayer.root.visibility = View.GONE
                     setNavHostBottomMargin(0)
@@ -52,6 +53,8 @@ class MainActivity : AppCompatActivity() {
                 else -> {
                     binding.bottomNavigation.visibility = View.VISIBLE
                     setNavHostBottomMargin(56)
+                    // ✅ Mini player visibility is managed by ChannelsFragment/FavoritesFragment
+                    // Do NOT force-show it here — let the fragment decide
                 }
             }
         }
@@ -76,7 +79,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ✅ tvMiniStatus references hata diye (ab ye field nahi hai)
     fun showMiniPlayer(channelName: String) {
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channelName
