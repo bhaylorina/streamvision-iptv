@@ -14,7 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -161,9 +164,27 @@ class ChannelsFragment : Fragment() {
         binding.miniPlayer.tvMiniTitle.text = channel.name
         
         exoPlayer?.let { player ->
-            // ✅ FIX: channel.url use kar rahe hain (streamUrl nahi hai)
-            val mediaItem = MediaItem.fromUri(channel.url)
-            player.setMediaItem(mediaItem)
+            // ✅ FIX: Pass HTTP headers (User-Agent, Referer, Cookie) like full-screen player
+            val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(15_000)
+                .setReadTimeoutMs(15_000)
+            
+            // Add headers if available
+            val headers = mutableMapOf<String, String>()
+            if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
+            if (!channel.referer.isNullOrBlank()) headers["Referer"] = channel.referer
+            if (!channel.cookie.isNullOrBlank()) headers["Cookie"] = channel.cookie
+            
+            if (headers.isNotEmpty()) {
+                httpDataSourceFactory.setDefaultRequestProperties(headers)
+            }
+            
+            val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(requireContext(), httpDataSourceFactory)
+            val mediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(channel.url))
+            
+            player.setMediaSource(mediaSource)
             player.prepare()
             player.play()
             binding.miniPlayer.btnMiniPlayPause.setImageResource(R.drawable.ic_pause)

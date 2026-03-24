@@ -63,6 +63,13 @@ class ChannelsViewModel @Inject constructor(
 
     // ✅ Ye function Fragment use karega playlist select karne ke liye
     fun selectPlaylist(playlistId: Long) {
+        // ✅ FIX: Clear current channels immediately before loading new ones
+        _uiState.update {
+            it.copy(
+                channels = emptyList(),
+                filteredChannels = emptyList()
+            )
+        }
         loadChannels(playlistId)
     }
 
