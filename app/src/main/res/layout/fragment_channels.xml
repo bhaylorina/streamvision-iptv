@@ -5,48 +5,16 @@
     android:layout_height="match_parent"
     android:background="@color/primary_background">
 
-    <!-- Header with playlist name, back button and add button -->
-    <LinearLayout
-        android:id="@+id/header"
+    <!-- ✅ MiniPlayer at TOP -->
+    <include
+        android:id="@+id/mini_player"
+        layout="@layout/layout_mini_player"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:padding="16dp"
-        app:layout_constraintTop_toTopOf="parent">
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent" />
 
-        <ImageButton
-            android:id="@+id/btn_back_to_playlists"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_back"
-            android:visibility="gone"
-            android:contentDescription="Back to playlists"
-            app:tint="@color/text_primary" />
-
-        <TextView
-            android:id="@+id/tv_playlist_name"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="@string/playlists"
-            android:textColor="@color/text_primary"
-            android:textSize="24sp"
-            android:textStyle="bold" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_add_playlist"
-            style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:icon="@drawable/ic_add"
-            app:iconTint="@color/primary_accent" />
-
-    </LinearLayout>
-
-    <!-- Search bar -->
+    <!-- Search bar (below MiniPlayer) -->
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/search_layout"
         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
@@ -60,7 +28,7 @@
         app:hintTextColor="@color/text_secondary"
         app:startIconDrawable="@drawable/ic_search"
         app:startIconTint="@color/text_secondary"
-        app:layout_constraintTop_toBottomOf="@id/header">
+        app:layout_constraintTop_toBottomOf="@id/mini_player">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/et_search"
@@ -79,8 +47,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        android:scrollbars="none"
-        android:visibility="gone"
+        android:scrollbars="none"        android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/search_layout">
 
         <com.google.android.material.chip.ChipGroup
@@ -129,8 +96,7 @@
             <!-- Channels RecyclerView -->
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rv_channels"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_width="match_parent"                android:layout_height="match_parent"
                 android:clipToPadding="false"
                 android:paddingHorizontal="16dp"
                 android:paddingBottom="16dp"
@@ -179,7 +145,6 @@
                 android:gravity="center"
                 android:orientation="vertical"
                 android:visibility="gone">
-
                 <ImageView
                     android:layout_width="120dp"
                     android:layout_height="120dp"
