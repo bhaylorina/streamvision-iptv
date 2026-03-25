@@ -8,7 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.fragment.app.viewModels
-import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -80,7 +79,7 @@ class PlayerFragment : Fragment() {
     private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
     private val hideVolume     = Runnable { binding.volumeOverlay.visibility     = View.GONE }
 
-    // FIX: Guard so exitPlayerMode is only called once per lifecycle
+    // Guard so exitPlayerMode is only called once per lifecycle
     private var playerModeExited = false
 
     private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
@@ -128,7 +127,7 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            Log.e(TAG, "Player error[${error.errorCode}]: ${error.message}", error)
             showError("${error.message}\n\nError Code: ${error.errorCode}")
         }
     }
@@ -150,7 +149,6 @@ class PlayerFragment : Fragment() {
         playerModeExited = false
 
         enterPlayerMode()
-        // FIX: Only one back button registration here — no duplicate
         setupBackButton()
         setupStaticListeners()
         setupGestures()
@@ -158,7 +156,6 @@ class PlayerFragment : Fragment() {
         observeChannel()
     }
 
-    // FIX: Single back button registration — no duplicate anywhere in this file
     private fun setupBackButton() {
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
@@ -178,7 +175,7 @@ class PlayerFragment : Fragment() {
             (activity as? MainActivity)?.showMiniPlayer(channel.name)
         }
 
-        // FIX: Guard popBackStack — if stack is empty, finish() instead of crash
+        // Guard popBackStack — if stack is empty, finish() instead of crash
         if (!findNavController().popBackStack()) {
             activity?.finish()
         }
@@ -226,7 +223,7 @@ class PlayerFragment : Fragment() {
 
     private fun enterPlayerMode() {
         val window = activity?.window ?: return
-        // FIX: Keep screen on during fullscreen playback
+        // Keep screen on during fullscreen playback
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor     = Color.BLACK
         window.navigationBarColor = Color.BLACK
@@ -249,7 +246,7 @@ class PlayerFragment : Fragment() {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    // FIX: Ensures exitPlayerMode runs exactly once even if both navigateBack()
+    // Ensures exitPlayerMode runs exactly once even if both navigateBack()
     // and onDestroyView() fire (e.g. back pressed then fragment destroyed by system)
     private fun safeExitPlayerMode() {
         if (!playerModeExited) {
@@ -478,24 +475,10 @@ class PlayerFragment : Fragment() {
             else           AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
     private fun showError(message: String) {
         binding.progressBuffering.visibility = View.GONE
         binding.errorOverlay.visibility      = View.VISIBLE
         binding.tvError.text                 = message
-    }
-
-    private fun hexToBase64Url(hex: String) =
-        Base64.encodeToString(hexToBytes(hex), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
-    private fun hexToBytes(hex: String): ByteArray {
-        require(hex.length % 2 == 0)
-        return ByteArray(hex.length / 2) { i ->
-            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -517,7 +500,7 @@ class PlayerFragment : Fragment() {
         overlayHandler.removeCallbacksAndMessages(null)
         playerManager.removeListener(playerListener)
         binding.playerView.player = null
-        // FIX: Safety net — always restore system UI + orientation on destroy,
+        // Safety net — always restore system UI + orientation on destroy,
         // handles cases where fragment is killed by system before navigateBack() runs
         safeExitPlayerMode()
         _binding = null
