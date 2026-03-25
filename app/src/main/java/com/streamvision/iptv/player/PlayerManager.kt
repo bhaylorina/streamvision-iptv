@@ -39,14 +39,19 @@ class PlayerManager @Inject constructor(
     fun removeListener(listener: Player.Listener) { player.removeListener(listener) }
 
     fun play(channel: Channel) {
-        if (currentChannel?.id == channel.id && player.isPlaying) return
+        // PREVENT RESTARTING SEAMLESSLY IF SAME CHANNEL IS CLICKED
+        if (currentChannel?.id == channel.id) {
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+            player.playWhenReady = true
+            return 
+        }
 
         currentChannel = channel
 
-        // Set headers
         httpFactory.setDefaultRequestProperties(buildHeaders(channel))
 
-        // Exact DRM Logic from your reference file
         val msf = DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory)
         
         if (!channel.drmKey.isNullOrBlank()) {
@@ -58,7 +63,6 @@ class PlayerManager @Inject constructor(
 
         val mediaItemBuilder = MediaItem.Builder().setUri(channel.url)
         
-        // Widevine fallback (if any)
         if (!channel.drmLicenseUrl.isNullOrBlank()) {
             mediaItemBuilder.setDrmConfiguration(
                 MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
@@ -102,7 +106,6 @@ class PlayerManager @Inject constructor(
         return headers
     }
 
-    // Exact DRM parsing logic from your reference
     private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
         return try {
             val parts = drmKey.trim().split(":")
