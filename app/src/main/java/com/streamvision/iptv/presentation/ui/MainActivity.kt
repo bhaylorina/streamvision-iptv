@@ -9,6 +9,8 @@ import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
@@ -82,6 +84,15 @@ class MainActivity : AppCompatActivity() {
     fun showMiniPlayer(channelName: String) {
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channelName
+
+        // FIX: Apply status bar inset as top padding so the mini player
+        // never overlaps the status bar on any device or Android version.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.miniPlayer.root) { view, insets ->
+            val topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            view.setPadding(0, topInset, 0, 0)
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.miniPlayer.root)
     }
 
     fun hideMiniPlayer() {
