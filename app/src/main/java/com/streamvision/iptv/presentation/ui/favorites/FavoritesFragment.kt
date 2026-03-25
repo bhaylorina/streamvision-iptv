@@ -36,7 +36,11 @@ class FavoritesFragment : Fragment() {
 
     private var isNavigatingToFullscreen = false
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
         _binding = FragmentFavoritesBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -55,7 +59,9 @@ class FavoritesFragment : Fragment() {
             setOnClickListener {
                 if (channelsViewModel.playerManager.currentChannel != null) {
                     isNavigatingToFullscreen = true
-                    val action = FavoritesFragmentDirections.actionFavoritesToPlayer(channelsViewModel.playerManager.currentChannel!!.id)
+                    val action = FavoritesFragmentDirections.actionFavoritesToPlayer(
+                        channelsViewModel.playerManager.currentChannel!!.id
+                    )
                     findNavController().navigate(action)
                 }
             }
@@ -66,11 +72,13 @@ class FavoritesFragment : Fragment() {
         super.onResume()
         isNavigatingToFullscreen = false
         binding.inlinePlayerView.player = channelsViewModel.playerManager.player
+        // Force list update when coming back
+        viewModel.setSearchQuery(binding.etSearch.text?.toString() ?: "")
     }
 
     override fun onPause() {
         super.onPause()
-        // If user changed tabs to Playlists/Settings, STOP playing!
+        // If user is switching to Settings or Playlists tab, stop the video!
         if (!isNavigatingToFullscreen) {
             channelsViewModel.playerManager.stop()
         }
@@ -91,5 +99,34 @@ class FavoritesFragment : Fragment() {
         }
     }
 
-    // ...[Keep your existing setupSearch and observeState functions] ...
+    private fun setupSearch() {
+        binding.etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                viewModel.setSearchQuery(s?.toString() ?: "")
+            }
+        })
+    }
+
+    private fun observeState() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state ->
+                    binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
+
+                    channelAdapter.submitList(state.filteredFavorites)
+
+                    val showEmpty = state.filteredFavorites.isEmpty() && !state.isLoading
+                    binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+                    binding.rvFavorites.visibility = if (showEmpty) View.GONE else View.VISIBLE
+                }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
 }
