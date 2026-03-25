@@ -6,6 +6,7 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -38,28 +39,26 @@ class ChannelsFragment : Fragment() {
 
     private lateinit var channelAdapter: ChannelAdapter
     private lateinit var playlistAdapter: PlaylistAdapter
-
     private var searchJob: Job? = null
+    
+    // Safety flag so we don't kill playback if user pressed "Fullscreen"
+    private var isNavigatingToFullscreen = false
 
-    // Back callback: when in channel list → go back to playlist list
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
+            // STOP playback when exiting back to Playlists Screen
+            viewModel.playerManager.stop()
             viewModel.clearCurrentPlaylist()
         }
     }
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentChannelsBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
         setupPlaylistRecyclerView()
@@ -68,159 +67,78 @@ class ChannelsFragment : Fragment() {
         setupGroupChipAll()
         setupAddPlaylistButton()
         setupSwipeRefresh()
+        setupInlinePlayer()
         observeUiState()
+    }
+
+    private fun setupInlinePlayer() {
+        // Setup Fullscreen Transition Button
+        binding.inlinePlayerView.findViewById<ImageButton>(R.id.btn_fullscreen)?.apply {
+            setImageResource(R.drawable.ic_fullscreen)
+            setOnClickListener {
+                if (viewModel.playerManager.currentChannel != null) {
+                    isNavigatingToFullscreen = true
+                    val bundle = Bundle().apply { putLong("channelId", viewModel.playerManager.currentChannel!!.id) }
+                    findNavController().navigate(R.id.action_channels_to_player, bundle)
+                }
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        isNavigatingToFullscreen = false // Reset state
+        binding.inlinePlayerView.player = viewModel.playerManager.player
         viewModel.refreshPlaylists()
     }
 
-    // -------------------------------------------------------------------------
-    // RecyclerView setup
-    // -------------------------------------------------------------------------
+    override fun onPause() {
+        super.onPause()
+        // If user changed tabs to Favorites/Settings, STOP playing!
+        if (!isNavigatingToFullscreen) {
+            viewModel.playerManager.stop()
+        }
+        binding.inlinePlayerView.player = null
+    }
 
     private fun setupPlaylistRecyclerView() {
         playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist -> viewModel.selectPlaylist(playlist.id) },
-            onDeleteClick = { _ ->
-                Snackbar.make(binding.root, "Delete playlists from Settings", Snackbar.LENGTH_SHORT).show()
-            }
+            onDeleteClick = { _ -> Snackbar.make(binding.root, "Delete playlists from Settings", Snackbar.LENGTH_SHORT).show() }
         )
         binding.rvPlaylists.apply {
-            adapter       = playlistAdapter
+            adapter = playlistAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
 
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
-            onChannelClick  = { channel -> onChannelTapped(channel) },
+            onChannelClick = { channel -> 
+                viewModel.onChannelSelected(channel.id)
+                viewModel.playerManager.play(channel) // Play in TOP inline player
+            },
             onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) }
         )
         binding.rvChannels.apply {
-            adapter       = channelAdapter
+            adapter = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Channel tap → navigate to full-screen PlayerFragment
-    // -------------------------------------------------------------------------
-
-    private fun onChannelTapped(channel: Channel) {
-        viewModel.onChannelSelected(channel.id)
-        navigateToPlayer(channel.id)
-    }
-
-    private fun navigateToPlayer(channelId: Long) {
-        val bundle = Bundle().apply { putLong("channelId", channelId) }
-        findNavController().navigate(R.id.action_channels_to_player, bundle)
-    }
-
-    // -------------------------------------------------------------------------
-    // Other UI setup
-    // -------------------------------------------------------------------------
-
-    private fun setupSearch() {
-        binding.etSearch.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                searchJob?.cancel()
-                searchJob = viewLifecycleOwner.lifecycleScope.launch {
-                    delay(300)
-                    viewModel.setSearchQuery(s?.toString() ?: "")
-                }
-            }
-        })
-    }
-
-    private fun setupGroupChipAll() {
-        binding.chipAll.setOnClickListener { viewModel.setSelectedGroup(null) }
-    }
-
-    private fun setupAddPlaylistButton() {
-        binding.btnAddPlaylist.setOnClickListener { showAddPlaylistDialog() }
-        binding.btnAddFirstPlaylist.setOnClickListener { showAddPlaylistDialog() }
-    }
-
-    private fun setupSwipeRefresh() {
-        binding.swipeRefresh.setOnRefreshListener {
-            if (viewModel.uiState.value.currentPlaylist != null) {
-                // Re-download from network
-                viewModel.refreshCurrentPlaylist()
-            } else {
-                binding.swipeRefresh.isRefreshing = false
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // State observation
-    // -------------------------------------------------------------------------
-
-    private fun observeUiState() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { state -> renderState(state) }
-            }
-        }
-    }
+    
+    // ...[Keep your setupSearch(), setupGroupChipAll(), setupAddPlaylistButton(), etc.] ...
 
     private fun renderState(state: ChannelsUiState) {
-        binding.progressBar.visibility  = if (state.isLoading) View.VISIBLE else View.GONE
-        binding.swipeRefresh.isRefreshing = state.isLoading
-
         val isShowingChannels = state.currentPlaylist != null
-
         backCallback.isEnabled = isShowingChannels
 
         binding.headerPlaylist.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
-        binding.searchLayout.visibility   = if (isShowingChannels)  View.VISIBLE else View.GONE
-        binding.rvChannels.visibility     = if (isShowingChannels)  View.VISIBLE else View.GONE
-        binding.chipGroup.visibility      =
-            if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
-        binding.emptyState.visibility     =
-            if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty())
-                View.VISIBLE else View.GONE
-        binding.rvPlaylists.visibility    = if (!isShowingChannels) View.VISIBLE else View.GONE
-        binding.tvNoPlaylists.visibility  =
-            if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
-
-        if (!isShowingChannels) {
-            playlistAdapter.submitList(state.playlists)
-        } else {
-            channelAdapter.submitList(state.filteredChannels)
-            updateGroupChips(state.groups, state.selectedGroup)
-        }
-
-        state.error?.let { error ->
-            Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
-            viewModel.clearError()
-        }
-    }
-
-    private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
-        val chipGroup = binding.chipGroup
-        while (chipGroup.childCount > 1) chipGroup.removeViewAt(1)
-        binding.chipAll.isChecked = selectedGroup == null
-        groups.forEach { group ->
-            val chip = Chip(requireContext()).apply {
-                text         = group
-                isCheckable  = true
-                isChecked    = group == selectedGroup
-                setChipBackgroundColorResource(R.color.surface)
-                setOnClickListener { viewModel.setSelectedGroup(group) }
-            }
-            chipGroup.addView(chip)
-        }
-    }
-
-    private fun showAddPlaylistDialog() {
-        AddPlaylistDialog { name, url ->
-            viewModel.addPlaylist(name, url)
-        }.show(parentFragmentManager, "AddPlaylistDialog")
+        binding.inlinePlayerContainer.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
+        binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
+        
+        // ... [Rest of your UI bindings] ...
     }
 
     override fun onDestroyView() {
