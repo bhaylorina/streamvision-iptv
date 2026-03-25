@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.util.Rational
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -73,15 +72,13 @@ class MainActivity : AppCompatActivity() {
             when (destination.id) {
                 R.id.playerFragment -> {
                     isPlayerVisible = true
-                    binding.miniPlayer.miniPlayerView.player = null
-                    binding.miniPlayer.root.visibility = View.GONE
                     binding.bottomNavigation.visibility = View.GONE
                     setNavHostBottomMargin(0)
                 }
                 else -> {
                     isPlayerVisible = false
                     binding.bottomNavigation.visibility = View.VISIBLE
-                    setNavHostBottomMargin(80) // Fix: Match M3 standard bottom nav height
+                    setNavHostBottomMargin(80) 
                 }
             }
         }
@@ -101,43 +98,6 @@ class MainActivity : AppCompatActivity() {
                 requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-    }
-
-    fun showMiniPlayer(channelName: String) {
-        if (navController.currentDestination?.id == R.id.playerFragment) return
-
-        binding.miniPlayer.root.visibility = View.VISIBLE
-        binding.miniPlayer.tvMiniTitle.text = channelName
-        binding.miniPlayer.miniPlayerView.player = playerManager.player
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
-            if (playerManager.isPlaying) playerManager.pause() else playerManager.resume()
-            updateMiniPlayerState(playerManager.isPlaying)
-        }
-
-        binding.miniPlayer.btnMiniFullscreen.setOnClickListener {
-            playerManager.currentChannel?.let { channel ->
-                val bundle = Bundle().apply { putLong("channelId", channel.id) }
-                navController.navigate(R.id.playerFragment, bundle)
-            }
-        }
-
-        binding.miniPlayer.btnMiniClose.setOnClickListener {
-            playerManager.stop()
-            hideMiniPlayer()
-        }
-    }
-
-    fun hideMiniPlayer() {
-        binding.miniPlayer.miniPlayerView.player = null
-        binding.miniPlayer.root.visibility = View.GONE
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-    }
-
-    fun updateMiniPlayerState(isPlaying: Boolean) {
-        val icon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
-        binding.miniPlayer.btnMiniPlayPause.setImageResource(icon)
     }
 
     override fun onUserLeaveHint() {
