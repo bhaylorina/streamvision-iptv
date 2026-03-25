@@ -1,6 +1,8 @@
 package com.streamvision.iptv.data.repository
 
-import com.streamvision.iptv.data.local.ChannelDao
+import android.content.Context
+import android.net.Uri
+import androidx.core.net.toUri
 import com.streamvision.iptv.data.local.PlaylistDao
 import com.streamvision.iptv.data.local.PlaylistEntity
 import com.streamvision.iptv.data.model.M3UParser
@@ -9,6 +11,7 @@ import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.domain.model.Playlist
 import com.streamvision.iptv.domain.repository.ChannelRepository
 import com.streamvision.iptv.domain.repository.PlaylistRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -23,34 +26,34 @@ import javax.inject.Singleton
 @Singleton
 class PlaylistRepositoryImpl @Inject constructor(
     private val playlistDao: PlaylistDao,
-    private val channelDao: ChannelDao,
-    private val channelRepository: ChannelRepository
+    private val channelRepository: ChannelRepository,
+    @ApplicationContext private val context: Context
 ) : PlaylistRepository {
 
-    override fun getAllPlaylists(): Flow<List<Playlist>> {
-        return playlistDao.getAllPlaylists().map { entities ->
-            entities.map { entity ->
-                val count = channelDao.getChannelCount(entity.id)
-                entity.toDomain().copy(channelCount = count)
+    // Single JOIN query — no N+1 per-playlist channel count
+    override fun getAllPlaylists(): Flow<List<Playlist>> =
+        playlistDao.getAllPlaylistsWithCount().map { rows ->
+            rows.map { row ->
+                Playlist(
+                    id           = row.id,
+                    name         = row.name,
+                    url          = row.url,
+                    channelCount = row.channelCount,
+                    createdAt    = row.createdAt
+                )
             }
         }
-    }
 
-    override suspend fun getPlaylistById(id: Long): Playlist? {
-        return playlistDao.getPlaylistById(id)?.toDomain()
-    }
+    override suspend fun getPlaylistById(id: Long): Playlist? =
+        playlistDao.getPlaylistById(id)?.toDomain()
 
     override suspend fun addPlaylist(name: String, url: String): Long {
-        // ✅ FIX: Insert playlist FIRST to get the real ID
-        val playlistEntity = PlaylistEntity(name = name, url = url)
-        val playlistId = playlistDao.insertPlaylist(playlistEntity)
+        val entity = PlaylistEntity(name = name, url = url)
+        val playlistId = playlistDao.insertPlaylist(entity)
 
-        // ✅ FIX: Parse with the real playlistId (not hardcoded 0)
         val channels = fetchAndParsePlaylist(url, playlistId)
-
         if (channels.isNotEmpty()) {
             channelRepository.saveChannels(channels, playlistId)
-            playlistDao.updateChannelCount(playlistId, channels.size)
         }
 
         return playlistId
@@ -65,39 +68,53 @@ class PlaylistRepositoryImpl @Inject constructor(
         playlistDao.deletePlaylistById(id)
     }
 
-    suspend fun fetchAndParsePlaylist(url: String, playlistId: Long = 0): List<Channel> =
+    override suspend fun refreshPlaylist(id: Long) {
+        val playlist = playlistDao.getPlaylistById(id) ?: return
+        val channels = fetchAndParsePlaylist(playlist.url, id)
+        channelRepository.saveChannels(channels, id)
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Fetches and parses a playlist from either a network URL or a content:// / file:// URI.
+     * Throws on network / IO error so callers can surface the failure to the user.
+     */
+    suspend fun fetchAndParsePlaylist(url: String, playlistId: Long): List<Channel> =
         withContext(Dispatchers.IO) {
-            try {
-                val content = fetchUrlContent(url)
-                if (M3UParser.isValidM3U(content)) {
-                    // ✅ FIX: Pass the real playlistId here
-                    M3UParser.parse(content, playlistId = playlistId)
-                } else {
-                    emptyList()
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                emptyList()
+            val content = when {
+                url.startsWith("content://") || url.startsWith("file://") ->
+                    readLocalUri(url.toUri())
+                else ->
+                    fetchUrlContent(url)
             }
+            if (!M3UParser.isValidM3U(content)) {
+                throw IllegalStateException("The file does not appear to be a valid M3U playlist")
+            }
+            M3UParser.parse(content, playlistId)
         }
+
+    private fun readLocalUri(uri: Uri): String {
+        val stream = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalStateException("Cannot open URI: $uri")
+        return stream.use { BufferedReader(InputStreamReader(it)).readText() }
+    }
 
     private fun fetchUrlContent(urlString: String): String {
         val url = URL(urlString)
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.setRequestProperty("User-Agent", "StreamVisionIPTV/1.0")
-        connection.connectTimeout = 15000
-        connection.readTimeout = 15000
-
+        connection.connectTimeout = 15_000
+        connection.readTimeout    = 15_000
         return try {
-            connection.responseCode.let { code ->
-                if (code == HttpURLConnection.HTTP_OK) {
-                    BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
-                        reader.readText()
-                    }
-                } else {
-                    throw Exception("HTTP error: $code")
-                }
+            val code = connection.responseCode
+            if (code == HttpURLConnection.HTTP_OK) {
+                BufferedReader(InputStreamReader(connection.inputStream)).use { it.readText() }
+            } else {
+                throw Exception("HTTP error $code fetching playlist")
             }
         } finally {
             connection.disconnect()
@@ -105,9 +122,9 @@ class PlaylistRepositoryImpl @Inject constructor(
     }
 
     private fun Playlist.toEntity() = PlaylistEntity(
-        id = id,
-        name = name,
-        url = url,
+        id        = id,
+        name      = name,
+        url       = url,
         createdAt = createdAt
     )
 }

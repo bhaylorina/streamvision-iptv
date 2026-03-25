@@ -1,9 +1,12 @@
 package com.streamvision.iptv.presentation.ui
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -18,13 +21,22 @@ import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.ActivityMainBinding
+import com.streamvision.iptv.player.PlayerManager
+import com.streamvision.iptv.presentation.ui.player.PlayerFragment
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var navController: NavController
+
+    @Inject
+    lateinit var playerManager: PlayerManager
+
+    /** True while [PlayerFragment] is the current destination — used to gate PiP. */
+    private var isPlayerVisible = false
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -33,25 +45,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // FIX: Draw edge-to-edge so we can manually apply insets to every view.
-        // This is required on Android 15+ and ensures no view overlaps the status bar.
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // FIX: Apply system bar insets once to the root — every fragment
-        // will automatically sit below the status bar because navHostFragment
-        // gets a topMargin equal to the status bar height.
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
-            // Push nav host below status bar
             val navParams = binding.navHostFragment.layoutParams as ViewGroup.MarginLayoutParams
             navParams.topMargin = systemBars.top
             binding.navHostFragment.layoutParams = navParams
 
-            // Push bottom nav above gesture bar / nav bar
             val bottomNavParams = binding.bottomNavigation.layoutParams as ViewGroup.MarginLayoutParams
             bottomNavParams.bottomMargin = systemBars.bottom
             binding.bottomNavigation.layoutParams = bottomNavParams
@@ -73,11 +78,13 @@ class MainActivity : AppCompatActivity() {
         navController.addOnDestinationChangedListener { _, destination, _ ->
             when (destination.id) {
                 R.id.playerFragment -> {
+                    isPlayerVisible = true
                     binding.bottomNavigation.visibility = View.GONE
                     binding.miniPlayer.root.visibility = View.GONE
                     setNavHostBottomMargin(0)
                 }
                 else -> {
+                    isPlayerVisible = false
                     binding.bottomNavigation.visibility = View.VISIBLE
                     setNavHostBottomMargin(56)
                 }
@@ -95,8 +102,7 @@ class MainActivity : AppCompatActivity() {
     private fun requestPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
+                    this, Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -104,14 +110,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // FIX: Keep screen on whenever the mini player is visible
+    // -------------------------------------------------------------------------
+    // Mini-player (shown when navigating away from full-screen player)
+    // -------------------------------------------------------------------------
+
     fun showMiniPlayer(channelName: String) {
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channelName
+        // Attach the shared persistent player to the mini-player view
+        binding.miniPlayer.miniPlayerView.player = playerManager.player
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        binding.miniPlayer.btnMiniPlayPause.setOnClickListener {
+            if (playerManager.isPlaying) playerManager.pause() else playerManager.resume()
+            updateMiniPlayerState(playerManager.isPlaying)
+        }
+
+        binding.miniPlayer.btnMiniFullscreen.setOnClickListener {
+            playerManager.currentChannel?.let { channel ->
+                val bundle = android.os.Bundle().apply { putLong("channelId", channel.id) }
+                navController.navigate(R.id.playerFragment, bundle)
+            }
+        }
+
+        binding.miniPlayer.btnMiniClose.setOnClickListener {
+            playerManager.stop()
+            hideMiniPlayer()
+        }
     }
 
     fun hideMiniPlayer() {
+        binding.miniPlayer.miniPlayerView.player = null
         binding.miniPlayer.root.visibility = View.GONE
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
@@ -119,6 +148,37 @@ class MainActivity : AppCompatActivity() {
     fun updateMiniPlayerState(isPlaying: Boolean) {
         val icon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         binding.miniPlayer.btnMiniPlayPause.setImageResource(icon)
+    }
+
+    // -------------------------------------------------------------------------
+    // Picture-in-Picture (Phase 3)
+    // -------------------------------------------------------------------------
+
+    /** Enter PiP when the user presses Home while PlayerFragment is visible. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isPlayerVisible && playerManager.isPlaying &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        ) {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        }
+    }
+
+    /** Dispatch PiP mode changes to the currently visible PlayerFragment. */
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        val navHost = supportFragmentManager
+            .findFragmentById(R.id.nav_host_fragment) as? NavHostFragment
+        val current = navHost?.childFragmentManager?.primaryNavigationFragment
+        if (current is PlayerFragment) {
+            current.handlePipModeChange(isInPictureInPictureMode)
+        }
     }
 
     override fun onSupportNavigateUp(): Boolean {

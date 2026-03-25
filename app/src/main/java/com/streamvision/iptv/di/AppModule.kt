@@ -32,15 +32,11 @@ object DatabaseModule {
 
     @Provides
     @Singleton
-    fun provideChannelDao(database: AppDatabase): ChannelDao {
-        return database.channelDao()
-    }
+    fun provideChannelDao(database: AppDatabase): ChannelDao = database.channelDao()
 
     @Provides
     @Singleton
-    fun providePlaylistDao(database: AppDatabase): PlaylistDao {
-        return database.playlistDao()
-    }
+    fun providePlaylistDao(database: AppDatabase): PlaylistDao = database.playlistDao()
 }
 
 @Module
@@ -49,19 +45,14 @@ object RepositoryModule {
 
     @Provides
     @Singleton
-    fun provideChannelRepository(
-        channelDao: ChannelDao
-    ): ChannelRepository {
-        return ChannelRepositoryImpl(channelDao)
-    }
+    fun provideChannelRepository(channelDao: ChannelDao): ChannelRepository =
+        ChannelRepositoryImpl(channelDao)
 
     @Provides
     @Singleton
     fun providePlaylistRepository(
         playlistDao: PlaylistDao,
-        channelDao: ChannelDao,
-        channelRepository: ChannelRepository
-    ): PlaylistRepository {
-        return PlaylistRepositoryImpl(playlistDao, channelDao, channelRepository)
-    }
+        channelRepository: ChannelRepository,
+        @ApplicationContext context: Context
+    ): PlaylistRepository = PlaylistRepositoryImpl(playlistDao, channelRepository, context)
 }

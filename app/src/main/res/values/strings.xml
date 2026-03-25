@@ -35,4 +35,8 @@
     <!-- Added: required by AddPlaylistDialog -->
     <string name="error_name_required">Name is required</string>
     <string name="error_url_required">URL is required</string>
+    <string name="browse_file">Browse local file…</string>
+    <string name="recently_watched">RECENTLY WATCHED</string>
+    <string name="search_favorites">Search favorites…</string>
+    <string name="refresh">Refresh</string>
 </resources>

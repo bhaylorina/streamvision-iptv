@@ -23,4 +23,6 @@ interface PlaylistRepository {
     suspend fun addPlaylist(name: String, url: String): Long
     suspend fun updatePlaylist(playlist: Playlist)
     suspend fun deletePlaylist(id: Long)
+    /** Re-download and re-parse the playlist, replacing all stored channels. */
+    suspend fun refreshPlaylist(id: Long)
 }

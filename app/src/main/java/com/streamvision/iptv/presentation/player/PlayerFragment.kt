@@ -266,6 +266,17 @@ class PlayerFragment : Fragment() {
         )
     }
 
+    /**
+     * Called by [MainActivity.onPictureInPictureModeChanged].
+     * Hides all overlays when entering PiP; restores them on exit.
+     */
+    fun handlePipModeChange(isInPiP: Boolean) {
+        binding.playerView.useController    = !isInPiP
+        binding.tvChannelName.visibility    = if (isInPiP) View.GONE else View.VISIBLE
+        binding.brightnessOverlay.visibility = View.GONE
+        binding.volumeOverlay.visibility     = View.GONE
+    }
+
     // -------------------------------------------------------------------------
     // Gestures
     // -------------------------------------------------------------------------
