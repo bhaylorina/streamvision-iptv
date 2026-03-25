@@ -51,13 +51,12 @@ class PlayerFragment : Fragment() {
     private val viewModel: PlayerViewModel by viewModels()
     private val args: PlayerFragmentArgs by navArgs()
 
-    // Yahan hum shared PlayerManager ko inject kar rahe hain
     @Inject
     lateinit var playerManager: PlayerManager
 
     private var isZoomFit = true
 
-    // Gestures ke variables
+    // Gestures
     private lateinit var audioManager: AudioManager
     private var maxVolume = 0
     private var initVolume = 0
@@ -105,9 +104,6 @@ class PlayerFragment : Fragment() {
         // CHALTE HUE PLAYER KO ATTACH KARNA (Seamless Playback)
         binding.playerView.player = playerManager.player
         playerManager.addListener(playerListener)
-
-        // Title update directly
-        binding.tvChannelName.text = playerManager.currentChannel?.name
     }
 
     private fun hideSystemUI() {
@@ -123,7 +119,6 @@ class PlayerFragment : Fragment() {
     fun handlePipModeChange(isInPiP: Boolean) {
         if (_binding == null) return
         binding.playerView.useController = !isInPiP
-        binding.tvChannelName.visibility = if (isInPiP) View.GONE else View.VISIBLE
     }
 
     // -------------------------------------------------------------------------
@@ -277,7 +272,6 @@ class PlayerFragment : Fragment() {
             binding.playerView.findViewById<View>(R.id.btn_zoom)
                 ?.setOnClickListener { toggleZoom() }
                 
-            // Fullscreen Exit Button - Navigates Back WITHOUT stopping stream
             binding.playerView.findViewById<ImageButton>(R.id.btn_fullscreen)?.apply {
                 setImageResource(R.drawable.ic_fullscreen_exit)
                 setOnClickListener {
@@ -292,10 +286,6 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     if (_binding == null) return@collect
-
-                    state.currentChannel?.let { channel ->
-                        binding.tvChannelName.text = channel.name
-                    }
                     if (state.error != null) showError(state.error)
                 }
             }
@@ -464,7 +454,7 @@ class PlayerFragment : Fragment() {
 
         override fun onPlayerError(error: PlaybackException) {
             if (_binding == null) return
-            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            Log.e(TAG, "Player error[${error.errorCode}]: ${error.message}", error)
             showError("${error.message}\n\nError Code: ${error.errorCode}")
         }
     }
@@ -479,15 +469,11 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         
-        // Handlers aur listeners ko remove karein taaki memory leak na ho
         overlayHandler.removeCallbacksAndMessages(null)
         playerManager.removeListener(playerListener)
         
-        // IMPORTANT: Hum player.release() ya player.stop() call nahi kar rahe!
-        // Sirf UI se player ko detach kar rahe hain taaki piche jaakar list mein wapas wahi se chal sake
         binding.playerView.player = null 
         
-        // Wapas list layout mein aate waqt system UI aur orientation theek karna
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.window?.let { window ->
             WindowCompat.setDecorFitsSystemWindows(window, false)
