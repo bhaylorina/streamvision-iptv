@@ -3,19 +3,19 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:fitsSystemWindows="true"
     android:background="@color/primary_background">
 
     <!--
-        ✅ FIXED: Mini player sits BELOW the status bar.
-        We do NOT use fitsSystemWindows here because the Activity handles insets.
-        The mini player is placed inside the main layout below the nav host,
-        so it naturally appears under the status bar.
-        Height reduced to 160dp to leave room for controls without feeling too large.
+        FIX 1: Added android:fitsSystemWindows="true" on root so the layout
+        is pushed below the status bar and does not overlap it.
+        FIX 2: Increased PlayerView height from 160dp to 200dp so the
+        mini player is tall enough to be usable.
     -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/mini_player_view"
         android:layout_width="match_parent"
-        android:layout_height="160dp"
+        android:layout_height="200dp"
         android:background="@android:color/black"
         app:layout_constraintTop_toTopOf="parent"
         app:use_controller="false" />
