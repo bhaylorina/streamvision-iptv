@@ -14,7 +14,6 @@ import javax.inject.Inject
 data class ChannelsUiState(
     val channels: List<Channel> = emptyList(),
     val filteredChannels: List<Channel> = emptyList(),
-    val recentChannels: List<Channel> = emptyList(),
     val groups: List<String> = emptyList(),
     val selectedGroup: String? = null,
     val searchQuery: String = "",
@@ -36,7 +35,6 @@ class ChannelsViewModel @Inject constructor(
     private val addPlaylistUseCase: AddPlaylistUseCase,
     private val getPlaylistByIdUseCase: GetPlaylistByIdUseCase,
     private val refreshPlaylistUseCase: RefreshPlaylistUseCase,
-    private val getRecentChannelsUseCase: GetRecentChannelsUseCase,
     val playerManager: PlayerManager
 ) : ViewModel() {
 
@@ -45,7 +43,6 @@ class ChannelsViewModel @Inject constructor(
 
     init {
         loadPlaylists()
-        loadRecentChannels()
     }
 
     private fun loadPlaylists() {
@@ -61,15 +58,6 @@ class ChannelsViewModel @Inject constructor(
                     }
                 }
                 .launchIn(viewModelScope)
-        }
-    }
-
-    private fun loadRecentChannels() {
-        viewModelScope.launch {
-            getRecentChannelsUseCase()
-                .collect { recent ->
-                    _uiState.update { it.copy(recentChannels = recent) }
-                }
         }
     }
 
