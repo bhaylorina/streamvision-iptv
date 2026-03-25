@@ -142,6 +142,9 @@ class PlayerFragment : Fragment() {
                     gestureType = GestureType.NONE
                     initVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                     initBrightness = getCurrentBrightness()
+                    
+                    // FIX: Temporarily disable controller auto show to prevent controls popping up during a swipe gesture
+                    binding.playerView.controllerAutoShow = false
                     false
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -161,10 +164,12 @@ class PlayerFragment : Fragment() {
 
                     when (gestureType) {
                         GestureType.BRIGHTNESS -> {
+                            binding.playerView.hideController() // FIX: Hide controller forcibly
                             handleBrightness(dy, v.height.toFloat())
                             true
                         }
                         GestureType.VOLUME -> {
+                            binding.playerView.hideController() // FIX: Hide controller forcibly
                             handleVolume(dy, v.height.toFloat())
                             true
                         }
@@ -172,6 +177,17 @@ class PlayerFragment : Fragment() {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // FIX: Restore auto show state. If it was a simple tap, toggle manually.
+                    binding.playerView.controllerAutoShow = true
+                    if (gestureType == GestureType.NONE && event.actionMasked == MotionEvent.ACTION_UP) {
+                        if (binding.playerView.isControllerFullyVisible) {
+                            binding.playerView.hideController()
+                        } else {
+                            binding.playerView.showController()
+                        }
+                        gestureType = GestureType.NONE
+                        return@setOnTouchListener true
+                    }
                     gestureType = GestureType.NONE
                     false
                 }
@@ -450,6 +466,7 @@ class PlayerFragment : Fragment() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (_binding == null) return
             viewModel.updatePlaybackState(isPlaying = isPlaying)
+            binding.root.keepScreenOn = isPlaying // FIX: Keeps Screen on programmatically strictly while playing
         }
 
         override fun onPlayerError(error: PlaybackException) {
