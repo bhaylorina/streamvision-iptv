@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -25,27 +24,21 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
-import com.streamvision.iptv.domain.model.Channel
+import com.streamvision.iptv.player.PlayerManager
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 import kotlin.math.abs
 
 @UnstableApi
@@ -58,15 +51,13 @@ class PlayerFragment : Fragment() {
     private val viewModel: PlayerViewModel by viewModels()
     private val args: PlayerFragmentArgs by navArgs()
 
-    private var player: ExoPlayer? = null
-    private var currentChannel: Channel? = null
+    // Yahan hum shared PlayerManager ko inject kar rahe hain
+    @Inject
+    lateinit var playerManager: PlayerManager
 
-    // Zoom state: true = FIT (default), false = FILL
     private var isZoomFit = true
 
-    // -------------------------------------------------------------------------
-    // Gesture Variables
-    // -------------------------------------------------------------------------
+    // Gestures ke variables
     private lateinit var audioManager: AudioManager
     private var maxVolume = 0
     private var initVolume = 0
@@ -100,7 +91,6 @@ class PlayerFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // Initialize Audio Manager for Volume control
         audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
         maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         
@@ -108,7 +98,16 @@ class PlayerFragment : Fragment() {
         setupGestures()
         setupClickListeners()
         observeState()
+        
+        // Load UI info
         viewModel.loadChannel(args.channelId)
+
+        // CHALTE HUE PLAYER KO ATTACH KARNA (Seamless Playback)
+        binding.playerView.player = playerManager.player
+        playerManager.addListener(playerListener)
+
+        // Title update directly
+        binding.tvChannelName.text = playerManager.currentChannel?.name
     }
 
     private fun hideSystemUI() {
@@ -128,7 +127,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Gestures (Brightness & Volume with Edge Safe Margins)
+    // Gestures (Brightness & Volume)
     // -------------------------------------------------------------------------
 
     private fun setupGestures() {
@@ -136,16 +135,13 @@ class PlayerFragment : Fragment() {
             if (_binding == null) return@setOnTouchListener false
             
             val screenWidth = v.width.toFloat()
-            // 50dp safe zone to prevent conflicting with Android Back Swipe
             val edgeMarginPx = 50 * resources.displayMetrics.density 
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Ignore gesture if user touches extreme edges (allow system back swipe)
                     if (event.x < edgeMarginPx || event.x > screenWidth - edgeMarginPx) {
                         return@setOnTouchListener false
                     }
-
                     gestureStartX = event.x
                     gestureStartY = event.y
                     gestureType = GestureType.NONE
@@ -158,16 +154,12 @@ class PlayerFragment : Fragment() {
                     val dy = event.y - gestureStartY
 
                     if (gestureType == GestureType.NONE) {
-                        // Wait until threshold is crossed to determine swipe intent
                         if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD) {
                             return@setOnTouchListener false
                         }
-                        
                         gestureType = if (abs(dy) > abs(dx)) {
-                            // Vertical Swipe
                             if (gestureStartX < screenWidth / 2) GestureType.BRIGHTNESS else GestureType.VOLUME
                         } else {
-                            // Horizontal Swipe
                             GestureType.HORIZONTAL
                         }
                     }
@@ -253,14 +245,13 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Click listeners
+    // Click listeners & Dialogs
     // -------------------------------------------------------------------------
 
     private fun setupClickListeners() {
         binding.btnRetry.setOnClickListener {
-            currentChannel?.let { channel ->
-                releasePlayer()
-                setupAndPlay(channel)
+            playerManager.currentChannel?.let { channel ->
+                playerManager.play(channel)
             }
         }
 
@@ -268,8 +259,7 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    isEnabled = false // Safe back crash prevention
-                    releasePlayer()
+                    isEnabled = false
                     findNavController().popBackStack()
                 }
             }
@@ -286,12 +276,16 @@ class PlayerFragment : Fragment() {
 
             binding.playerView.findViewById<View>(R.id.btn_zoom)
                 ?.setOnClickListener { toggleZoom() }
+                
+            // Fullscreen Exit Button - Navigates Back WITHOUT stopping stream
+            binding.playerView.findViewById<ImageButton>(R.id.btn_fullscreen)?.apply {
+                setImageResource(R.drawable.ic_fullscreen_exit)
+                setOnClickListener {
+                    requireActivity().onBackPressedDispatcher.onBackPressed()
+                }
+            }
         }
     }
-
-    // -------------------------------------------------------------------------
-    // State observer
-    // -------------------------------------------------------------------------
 
     private fun observeState() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -300,12 +294,6 @@ class PlayerFragment : Fragment() {
                     if (_binding == null) return@collect
 
                     state.currentChannel?.let { channel ->
-                        if (currentChannel?.id != channel.id) {
-                            currentChannel = channel
-                            Log.d(TAG, "New channel: ${channel.name} | URL: ${channel.url}")
-                            releasePlayer()
-                            setupAndPlay(channel)
-                        }
                         binding.tvChannelName.text = channel.name
                     }
                     if (state.error != null) showError(state.error)
@@ -314,76 +302,8 @@ class PlayerFragment : Fragment() {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Player setup
-    // -------------------------------------------------------------------------
-
-    private fun setupAndPlay(channel: Channel) {
-        binding.errorOverlay.visibility = View.GONE
-        binding.progressBuffering.visibility = View.VISIBLE
-
-        val httpFactory = buildHttpDataSourceFactory(channel)
-        val playerBuilder = ExoPlayer.Builder(requireContext())
-
-        if (!channel.drmKey.isNullOrBlank()) {
-            val drm = buildClearKeyDrmSessionManager(channel.drmKey)
-            val msf = DefaultMediaSourceFactory(requireContext())
-                .setDataSourceFactory(httpFactory)
-                .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
-            playerBuilder.setMediaSourceFactory(msf)
-        } else {
-            playerBuilder.setMediaSourceFactory(
-                DefaultMediaSourceFactory(requireContext()).setDataSourceFactory(httpFactory)
-            )
-        }
-
-        player = playerBuilder.build().also { exoPlayer ->
-            binding.playerView.player = exoPlayer
-            exoPlayer.addListener(playerListener)
-            exoPlayer.setMediaItem(MediaItem.Builder().setUri(channel.url).build())
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
-        }
-
-        applyZoomMode()
-    }
-
-    private fun buildHttpDataSourceFactory(channel: Channel): DefaultHttpDataSource.Factory {
-        val headers = mutableMapOf<String, String>()
-        if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
-        if (!channel.referer.isNullOrBlank())   headers["Referer"]     = channel.referer
-        if (!channel.cookie.isNullOrBlank())    headers["Cookie"]      = channel.cookie
-        return DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-            .setDefaultRequestProperties(headers)
-    }
-
-    private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
-        return try {
-            val parts = drmKey.trim().split(":")
-            if (parts.size != 2) return null
-            val keyIdB64 = hexToBase64Url(parts[0])
-            val keyB64   = hexToBase64Url(parts[1])
-            val json = """{"keys":[{"kty":"oct","k":"$keyB64","kid":"$keyIdB64"}],"type":"temporary"}"""
-            val callback = LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8))
-            DefaultDrmSessionManager.Builder()
-                .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                .setMultiSession(false)
-                .build(callback)
-        } catch (e: Exception) {
-            Log.e(TAG, "DRM setup failed: ${e.message}", e)
-            null
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // UI Dialogs & Controls
-    // -------------------------------------------------------------------------
-
     private fun showAudioTrackDialog() {
-        val exoPlayer = player ?: return
+        val exoPlayer = playerManager.player
         val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
 
         if (audioGroups.isEmpty()) {
@@ -420,7 +340,7 @@ class PlayerFragment : Fragment() {
     }
 
     private fun showVideoQualityDialog() {
-        val exoPlayer = player ?: return
+        val exoPlayer = playerManager.player
         val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
 
         if (videoGroups.isEmpty()) {
@@ -487,19 +407,18 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // Player listener
+    // Player Listener & Lifecycle
     // -------------------------------------------------------------------------
 
     private val playerListener = object : Player.Listener {
-
         override fun onTracksChanged(tracks: Tracks) {
             if (_binding == null) return
-            val exoPlayer = player ?: return
+            val exoPlayer = playerManager.player
             val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
             if (videoGroups.isEmpty()) return
 
-            var bestGroup   = videoGroups[0]
-            var bestTrack   = 0
+            var bestGroup = videoGroups[0]
+            var bestTrack = 0
             var bestBitrate = -1
 
             videoGroups.forEach { group ->
@@ -507,8 +426,8 @@ class PlayerFragment : Fragment() {
                     val bps = group.getTrackFormat(ti).bitrate
                     if (bps > bestBitrate) {
                         bestBitrate = bps
-                        bestGroup   = group
-                        bestTrack   = ti
+                        bestGroup = group
+                        bestTrack = ti
                     }
                 }
             }
@@ -532,7 +451,7 @@ class PlayerFragment : Fragment() {
                 }
                 Player.STATE_READY -> {
                     binding.progressBuffering.visibility = View.GONE
-                    viewModel.updatePlaybackState(isPlaying = player?.isPlaying ?: false, isBuffering = false)
+                    viewModel.updatePlaybackState(isPlaying = playerManager.isPlaying, isBuffering = false)
                 }
                 else -> binding.progressBuffering.visibility = View.GONE
             }
@@ -550,10 +469,6 @@ class PlayerFragment : Fragment() {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers & Lifecycle
-    // -------------------------------------------------------------------------
-
     private fun showError(message: String) {
         if (_binding == null) return
         binding.progressBuffering.visibility = View.GONE
@@ -561,44 +476,26 @@ class PlayerFragment : Fragment() {
         binding.tvError.text = message
     }
 
-    private fun hexToBase64Url(hex: String): String =
-        Base64.encodeToString(hexToBytes(hex), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
-    private fun hexToBytes(hex: String): ByteArray {
-        require(hex.length % 2 == 0) { "Hex string must have even length" }
-        return ByteArray(hex.length / 2) { i ->
-            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
-        }
-    }
-
-    private fun releasePlayer() {
-        _binding?.playerView?.player = null 
-        player?.removeListener(playerListener)
-        player?.release()
-        player = null
-    }
-
-    override fun onPause() {
-        super.onPause()
-        player?.pause()
-    }
-
     override fun onDestroyView() {
         super.onDestroyView()
         
-        // Remove handler callbacks safely to prevent memory leaks
+        // Handlers aur listeners ko remove karein taaki memory leak na ho
         overlayHandler.removeCallbacksAndMessages(null)
-        releasePlayer()
+        playerManager.removeListener(playerListener)
         
+        // IMPORTANT: Hum player.release() ya player.stop() call nahi kar rahe!
+        // Sirf UI se player ko detach kar rahe hain taaki piche jaakar list mein wapas wahi se chal sake
+        binding.playerView.player = null 
+        
+        // Wapas list layout mein aate waqt system UI aur orientation theek karna
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.window?.let { window ->
-            // Restore edge-to-edge tracking for MainActivity
             WindowCompat.setDecorFitsSystemWindows(window, false)
-            // SHOW the Status Bar explicitly when returning from full screen
             val controller = WindowInsetsControllerCompat(window, window.decorView)
             controller.show(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
         }
+        
         _binding = null
     }
 }
