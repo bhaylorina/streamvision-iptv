@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    Mini player layout.
-    FIX: Removed fitsSystemWindows — insets are handled by MainActivity
-    applying a topMargin to the nav host. The mini player is anchored to
-    the BOTTOM of the screen (above the bottom nav), so it never touches
-    the status bar at all and needs no top-inset handling of its own.
-    FIX: PlayerView height increased from 160dp → 200dp for a usable size.
--->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/mini_player_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@color/primary_background">
