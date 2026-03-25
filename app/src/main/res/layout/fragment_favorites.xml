@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    FIX: Added paddingTop="16dp" to the title so there is a visual gap
+    below the status bar. The real status bar inset is applied by MainActivity
+    via navHostFragment topMargin so content never hides behind the status bar.
+-->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
