@@ -2,7 +2,6 @@ package com.streamvision.iptv.player
 
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.media3.common.C
@@ -79,10 +78,14 @@ class PlayerManager @Inject constructor(
         player.playWhenReady = true
 
         val intent = Intent(context, PlaybackService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
+        try {
+            // Media3's MediaSessionService automatically handles foreground state when playback starts.
+            // Using startForegroundService here causes crashes (ForegroundServiceDidNotStartInTimeException)
+            // if buffering takes longer than 5 seconds. A regular startService is safe because this method
+            // is only triggered from the UI (when the app is already in the foreground).
             context.startService(intent)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "Failed to start PlaybackService", e)
         }
     }
 
