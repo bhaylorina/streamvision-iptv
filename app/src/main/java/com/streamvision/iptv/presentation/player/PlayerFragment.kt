@@ -80,7 +80,7 @@ class PlayerFragment : Fragment() {
     private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
     private val hideVolume     = Runnable { binding.volumeOverlay.visibility     = View.GONE }
 
-    // FIX: Track whether exitPlayerMode has already been called to avoid double execution
+    // FIX: Guard so exitPlayerMode is only called once per lifecycle
     private var playerModeExited = false
 
     private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
@@ -146,10 +146,11 @@ class PlayerFragment : Fragment() {
         audioManager = requireContext().getSystemService()!!
         maxVolume    = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
-        // Reset flag each time view is created
+        // Reset exit guard each time the view is created
         playerModeExited = false
 
         enterPlayerMode()
+        // FIX: Only one back button registration here — no duplicate
         setupBackButton()
         setupStaticListeners()
         setupGestures()
@@ -157,7 +158,7 @@ class PlayerFragment : Fragment() {
         observeChannel()
     }
 
-    // FIX: Single back button registration — no duplicate callback
+    // FIX: Single back button registration — no duplicate anywhere in this file
     private fun setupBackButton() {
         requireActivity().onBackPressedDispatcher.addCallback(
             viewLifecycleOwner, object : OnBackPressedCallback(true) {
@@ -169,16 +170,15 @@ class PlayerFragment : Fragment() {
     }
 
     private fun navigateBack() {
-        // Detach surface — stream keeps playing
         binding.playerView.player = null
         safeExitPlayerMode()
 
-        // Tell MainActivity to show mini player again
+        // Tell MainActivity to show mini player again (keeps stream running)
         currentChannel?.let { channel ->
             (activity as? MainActivity)?.showMiniPlayer(channel.name)
         }
 
-        // FIX: Guard popBackStack() — if back stack is empty, finish() instead of crashing
+        // FIX: Guard popBackStack — if stack is empty, finish() instead of crash
         if (!findNavController().popBackStack()) {
             activity?.finish()
         }
@@ -190,7 +190,6 @@ class PlayerFragment : Fragment() {
 
                 val existingChannel = playerManager.currentChannel
                 if (existingChannel != null && existingChannel.id == args.channelId) {
-                    // Seamless — stream already running, just attach view
                     currentChannel = existingChannel
                     attachPlayerView()
                     binding.tvChannelName.text = existingChannel.name
@@ -227,6 +226,7 @@ class PlayerFragment : Fragment() {
 
     private fun enterPlayerMode() {
         val window = activity?.window ?: return
+        // FIX: Keep screen on during fullscreen playback
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor     = Color.BLACK
         window.navigationBarColor = Color.BLACK
@@ -241,7 +241,7 @@ class PlayerFragment : Fragment() {
     private fun exitPlayerMode() {
         val window = activity?.window ?: return
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.setDecorFitsSystemWindows(window, false) // MainActivity handles its own insets
         WindowInsetsControllerCompat(window, requireView())
             .show(WindowInsetsCompat.Type.systemBars())
         window.navigationBarColor = Color.parseColor("#1E1E2E")
@@ -249,8 +249,8 @@ class PlayerFragment : Fragment() {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    // FIX: Safe wrapper — ensures exitPlayerMode is only called once per lifecycle
-    // to avoid double-restoring orientation/system bars (which can cause flicker or crash)
+    // FIX: Ensures exitPlayerMode runs exactly once even if both navigateBack()
+    // and onDestroyView() fire (e.g. back pressed then fragment destroyed by system)
     private fun safeExitPlayerMode() {
         if (!playerModeExited) {
             playerModeExited = true
@@ -506,9 +506,8 @@ class PlayerFragment : Fragment() {
         overlayHandler.removeCallbacksAndMessages(null)
         playerManager.removeListener(playerListener)
         binding.playerView.player = null
-        // FIX: Safety net — always restore system UI and orientation on destroy.
-        // This handles cases where the fragment is destroyed by the system
-        // (e.g. low memory, rotation) without navigateBack() being called first.
+        // FIX: Safety net — always restore system UI + orientation on destroy,
+        // handles cases where fragment is killed by system before navigateBack() runs
         safeExitPlayerMode()
         _binding = null
     }
