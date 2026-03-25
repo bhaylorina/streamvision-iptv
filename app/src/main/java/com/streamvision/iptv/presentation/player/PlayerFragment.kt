@@ -1,51 +1,44 @@
 package com.streamvision.iptv.presentation.ui.player
 
 import android.content.pm.ActivityInfo
-import android.graphics.Color
-import android.media.AudioManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
+import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
-import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
-import androidx.core.content.getSystemService
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.streamvision.iptv.R
 import com.streamvision.iptv.databinding.FragmentPlayerBinding
 import com.streamvision.iptv.domain.model.Channel
-import com.streamvision.iptv.player.PlayerManager
-import com.streamvision.iptv.presentation.ui.MainActivity
-import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 @UnstableApi
 @AndroidEntryPoint
@@ -54,278 +47,188 @@ class PlayerFragment : Fragment() {
     private var _binding: FragmentPlayerBinding? = null
     private val binding get() = _binding!!
 
-    private val channelsViewModel: ChannelsViewModel by activityViewModels()
     private val viewModel: PlayerViewModel by viewModels()
     private val args: PlayerFragmentArgs by navArgs()
 
-    private val playerManager: PlayerManager get() = channelsViewModel.playerManager
-
+    private var player: ExoPlayer? = null
     private var currentChannel: Channel? = null
+
+    // Zoom state: true = FIT (default), false = FILL
     private var isZoomFit = true
-    private var playerModeExited = false
-
-    private lateinit var audioManager: AudioManager
-    private var maxVolume      = 0
-    private var initVolume     = 0
-    private var initBrightness = 0f
-
-    private var gestureStartX     = 0f
-    private var gestureStartY     = 0f
-    private var gestureType       = GestureType.NONE
-    private val GESTURE_THRESHOLD = 10f
-    private val BAR_TRACK_DP      = 120
-
-    private val overlayHandler = Handler(Looper.getMainLooper())
-    private val hideBrightness = Runnable { binding.brightnessOverlay.visibility = View.GONE }
-    private val hideVolume     = Runnable { binding.volumeOverlay.visibility     = View.GONE }
-
-    private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
 
     companion object {
-        private const val TAG             = "PlayerFragment"
-        private const val OVERLAY_HIDE_MS = 1500L
+        private const val TAG = "PlayerFragment"
     }
 
-    // Exact high-bitrate force logic from your reference
-    private val playerListener = object : Player.Listener {
-        override fun onTracksChanged(tracks: Tracks) {
-            val exoPlayer = playerManager.player ?: return
-            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-            if (videoGroups.isEmpty()) return
-
-            var bestGroup   = videoGroups[0]
-            var bestTrack   = 0
-            var bestBitrate = -1
-
-            videoGroups.forEach { group ->
-                for (ti in 0 until group.length) {
-                    val bps = group.getTrackFormat(ti).bitrate
-                    if (bps > bestBitrate) {
-                        bestBitrate = bps
-                        bestGroup   = group
-                        bestTrack   = ti
-                    }
-                }
-            }
-
-            if (!bestGroup.isTrackSelected(bestTrack)) {
-                val override = TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack)
-                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
-                    .buildUpon()
-                    .setOverrideForType(override)
-                    .build()
-                Log.d(TAG, "Auto-selected highest video: ${bestBitrate / 1000}kbps")
-            }
-        }
-
-        override fun onPlaybackStateChanged(state: Int) {
-            binding.progressBuffering.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
-            viewModel.updatePlaybackState(isPlaying = playerManager.isPlaying, isBuffering = state == Player.STATE_BUFFERING)
-        }
-
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            viewModel.updatePlaybackState(isPlaying = isPlaying)
-        }
-
-        override fun onPlayerError(error: PlaybackException) {
-            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
-            showError("${error.message}\n\nError Code: ${error.errorCode}")
-        }
-    }
-
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
         _binding = FragmentPlayerBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        audioManager = requireContext().getSystemService()!!
-        maxVolume    = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        playerModeExited = false
-
-        enterPlayerMode()
-        setupBackButton()
-        setupStaticListeners()
-        setupGestures()
-        setupControllerVisibilityListener()
-        observeChannel()
+        hideSystemUI()
+        setupClickListeners()
+        observeState()
+        viewModel.loadChannel(args.channelId)
     }
 
-    private fun setupBackButton() {
-        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { navigateBack() }
-        })
+    private fun hideSystemUI() {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val window = activity?.window ?: return
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, requireView())
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun navigateBack() {
-        binding.playerView.player = null
-        safeExitPlayerMode()
-        currentChannel?.let { (activity as? MainActivity)?.showMiniPlayer(it.name) }
-        if (!findNavController().popBackStack()) activity?.finish()
+    // -------------------------------------------------------------------------
+    // Click listeners
+    // -------------------------------------------------------------------------
+
+    private fun setupClickListeners() {
+        binding.btnRetry.setOnClickListener {
+            currentChannel?.let { channel ->
+                releasePlayer()
+                setupAndPlay(channel)
+            }
+        }
+
+        requireActivity().onBackPressedDispatcher.addCallback(
+            viewLifecycleOwner,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    // FIX: Disabling this prevents the app from crashing if you double-tap back quickly
+                    isEnabled = false 
+                    releasePlayer()
+                    findNavController().popBackStack()
+                }
+            }
+        )
+
+        binding.playerView.post {
+            // FIX: Ensure binding is still alive when this post executes
+            if (_binding == null) return@post 
+            
+            binding.playerView.findViewById<View>(R.id.btn_audio_track)
+                ?.setOnClickListener { showAudioTrackDialog() }
+
+            binding.playerView.findViewById<View>(R.id.btn_video_quality)
+                ?.setOnClickListener { showVideoQualityDialog() }
+
+            binding.playerView.findViewById<View>(R.id.btn_zoom)
+                ?.setOnClickListener { toggleZoom() }
+        }
     }
 
-    private fun observeChannel() {
+    // -------------------------------------------------------------------------
+    // State observer
+    // -------------------------------------------------------------------------
+
+    private fun observeState() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                val existingChannel = playerManager.currentChannel
-                if (existingChannel != null && existingChannel.id == args.channelId) {
-                    currentChannel = existingChannel
-                    attachPlayerView()
-                    binding.tvChannelName.text = existingChannel.name
-                } else {
-                    viewModel.loadChannel(args.channelId)
-                    viewModel.uiState.collect { state ->
-                        state.currentChannel?.let { channel ->
-                            if (currentChannel?.id != channel.id) {
-                                currentChannel = channel
-                                playerManager.play(channel)
-                                attachPlayerView()
-                                binding.tvChannelName.text = channel.name
-                            }
+                viewModel.uiState.collect { state ->
+                    if (_binding == null) return@collect // Safety check
+                    
+                    state.currentChannel?.let { channel ->
+                        if (currentChannel?.id != channel.id) {
+                            currentChannel = channel
+                            Log.d(TAG, "New channel: ${channel.name} | URL: ${channel.url}")
+                            releasePlayer()
+                            setupAndPlay(channel)
                         }
-                        if (state.error != null) showError(state.error)
+                        binding.tvChannelName.text = channel.name
                     }
+                    if (state.error != null) showError(state.error)
                 }
             }
         }
-        playerManager.addListener(playerListener)
     }
 
-    private fun attachPlayerView() {
-        binding.playerView.player = playerManager.player
-        applyZoomMode()
-        wireCustomButtons()
-    }
+    // -------------------------------------------------------------------------
+    // Player setup
+    // -------------------------------------------------------------------------
 
-    private fun enterPlayerMode() {
-        val window = activity?.window ?: return
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, requireView()).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    private fun setupAndPlay(channel: Channel) {
+        binding.errorOverlay.visibility = View.GONE
+        binding.progressBuffering.visibility = View.VISIBLE
+
+        val httpFactory = buildHttpDataSourceFactory(channel)
+        val playerBuilder = ExoPlayer.Builder(requireContext())
+
+        if (!channel.drmKey.isNullOrBlank()) {
+            val drm = buildClearKeyDrmSessionManager(channel.drmKey)
+            val msf = DefaultMediaSourceFactory(requireContext())
+                .setDataSourceFactory(httpFactory)
+                .apply { if (drm != null) setDrmSessionManagerProvider { drm } }
+            playerBuilder.setMediaSourceFactory(msf)
+        } else {
+            playerBuilder.setMediaSourceFactory(
+                DefaultMediaSourceFactory(requireContext()).setDataSourceFactory(httpFactory)
+            )
         }
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+        player = playerBuilder.build().also { exoPlayer ->
+            binding.playerView.player = exoPlayer
+            exoPlayer.addListener(playerListener)
+            exoPlayer.setMediaItem(MediaItem.Builder().setUri(channel.url).build())
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        }
+
+        applyZoomMode() // restore zoom preference on new player
     }
 
-    private fun safeExitPlayerMode() {
-        if (playerModeExited) return
-        playerModeExited = true
-        val window = activity?.window ?: return
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, requireView()).show(WindowInsetsCompat.Type.systemBars())
-        window.navigationBarColor = Color.parseColor("#1E1E2E")
-        window.statusBarColor = Color.parseColor("#1E1E2E")
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    // -------------------------------------------------------------------------
+    // HTTP headers
+    // -------------------------------------------------------------------------
+
+    private fun buildHttpDataSourceFactory(channel: Channel): DefaultHttpDataSource.Factory {
+        val headers = mutableMapOf<String, String>()
+        if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
+        if (!channel.referer.isNullOrBlank())   headers["Referer"]     = channel.referer
+        if (!channel.cookie.isNullOrBlank())    headers["Cookie"]      = channel.cookie
+        return DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(15_000)
+            .setDefaultRequestProperties(headers)
     }
 
-    private fun setupControllerVisibilityListener() {
-        binding.playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
-            binding.tvChannelName.visibility = v
-        })
-    }
+    // -------------------------------------------------------------------------
+    // ClearKey DRM
+    // -------------------------------------------------------------------------
 
-    fun handlePipModeChange(isInPiP: Boolean) {
-        binding.playerView.useController = !isInPiP
-        binding.tvChannelName.visibility = if (isInPiP) View.GONE else View.VISIBLE
-        binding.brightnessOverlay.visibility = View.GONE
-        binding.volumeOverlay.visibility = View.GONE
-    }
-
-    private fun setupGestures() {
-        binding.playerView.setOnTouchListener { v, event ->
-            val screenWidth = v.width.toFloat()
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    gestureStartX = event.x; gestureStartY = event.y; gestureType = GestureType.NONE
-                    initVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                    initBrightness = getCurrentBrightness()
-                    false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.x - gestureStartX
-                    val dy = event.y - gestureStartY
-                    if (gestureType == GestureType.NONE) {
-                        if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD) return@setOnTouchListener false
-                        gestureType = if (abs(dy) > abs(dx)) {
-                            if (gestureStartX < screenWidth / 2) GestureType.BRIGHTNESS else GestureType.VOLUME
-                        } else GestureType.HORIZONTAL
-                    }
-                    when (gestureType) {
-                        GestureType.BRIGHTNESS -> { handleBrightness(dy, v.height.toFloat()); true }
-                        GestureType.VOLUME     -> { handleVolume(dy, v.height.toFloat()); true }
-                        else                   -> false
-                    }
-                }
-                else -> false
-            }
+    private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
+        return try {
+            val parts = drmKey.trim().split(":")
+            if (parts.size != 2) return null
+            val keyIdB64 = hexToBase64Url(parts[0])
+            val keyB64   = hexToBase64Url(parts[1])
+            val json = """{"keys":[{"kty":"oct","k":"$keyB64","kid":"$keyIdB64"}],"type":"temporary"}"""
+            val callback = LocalMediaDrmCallback(json.toByteArray(Charsets.UTF_8))
+            DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                .setMultiSession(false)
+                .build(callback)
+        } catch (e: Exception) {
+            Log.e(TAG, "DRM setup failed: ${e.message}", e)
+            null
         }
     }
 
-    private fun handleBrightness(dy: Float, viewHeight: Float) {
-        val newBright = (initBrightness - (dy / viewHeight)).coerceIn(0.01f, 1f)
-        setBrightness(newBright)
-        val pct = (newBright * 100).toInt()
-        setBarHeight(binding.brightnessBar, pct)
-        binding.tvBrightnessPct.text = "$pct%"
-        binding.brightnessOverlay.visibility = View.VISIBLE
-        overlayHandler.removeCallbacks(hideBrightness)
-        overlayHandler.postDelayed(hideBrightness, OVERLAY_HIDE_MS)
-    }
+    // -------------------------------------------------------------------------
+    // 1. Audio Track dialog
+    // -------------------------------------------------------------------------
 
-    private fun setBrightness(value: Float) {
-        val window = activity?.window ?: return
-        val lp = window.attributes
-        lp.screenBrightness = value
-        window.attributes = lp
-    }
-
-    private fun getCurrentBrightness(): Float {
-        val lp = activity?.window?.attributes ?: return 0.5f
-        return if (lp.screenBrightness < 0) {
-            try { Settings.System.getInt(requireContext().contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f } 
-            catch (e: Exception) { 0.5f }
-        } else lp.screenBrightness
-    }
-
-    private fun handleVolume(dy: Float, viewHeight: Float) {
-        val newVol = (initVolume - (dy / viewHeight) * maxVolume).toInt().coerceIn(0, maxVolume)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-        val pct = newVol * 100 / maxVolume
-        setBarHeight(binding.volumeBar, pct)
-        binding.tvVolumePct.text = "$pct%"
-        binding.ivVolumeIcon.setImageResource(if (newVol == 0) R.drawable.ic_volume_mute else if (newVol < maxVolume/2) R.drawable.ic_volume_down else R.drawable.ic_volume_up)
-        binding.volumeOverlay.visibility = View.VISIBLE
-        overlayHandler.removeCallbacks(hideVolume)
-        overlayHandler.postDelayed(hideVolume, OVERLAY_HIDE_MS)
-    }
-
-    private fun setBarHeight(barView: View, pct: Int) {
-        val density = resources.displayMetrics.density
-        val lp = barView.layoutParams
-        lp.height = (BAR_TRACK_DP * density).toInt() * pct / 100
-        barView.layoutParams = lp
-    }
-
-    private fun setupStaticListeners() {
-        binding.btnRetry.setOnClickListener { currentChannel?.let { playerManager.play(it); attachPlayerView() } }
-    }
-
-    private fun wireCustomButtons() {
-        binding.playerView.post {
-            binding.playerView.findViewById<ImageButton>(R.id.btn_audio_track)?.setOnClickListener { showAudioTrackDialog() }
-            binding.playerView.findViewById<ImageButton>(R.id.btn_video_quality)?.setOnClickListener { showVideoQualityDialog() }
-            binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)?.setOnClickListener { toggleZoom() }
-        }
-    }
-
-    // Exact Audio Track Dialog from your reference
     private fun showAudioTrackDialog() {
-        val exoPlayer = playerManager.player ?: return
+        val exoPlayer = player ?: return
         val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
 
         if (audioGroups.isEmpty()) {
@@ -361,9 +264,12 @@ class PlayerFragment : Fragment() {
             .show()
     }
 
-    // Exact Video Quality Dialog from your reference
+    // -------------------------------------------------------------------------
+    // 2. Video Quality dialog
+    // -------------------------------------------------------------------------
+
     private fun showVideoQualityDialog() {
-        val exoPlayer = playerManager.player ?: return
+        val exoPlayer = player ?: return
         val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
 
         if (videoGroups.isEmpty()) {
@@ -415,11 +321,16 @@ class PlayerFragment : Fragment() {
             .show()
     }
 
+    // -------------------------------------------------------------------------
+    // 3. Zoom / Resize toggle  (FIT ↔ FILL)
+    // -------------------------------------------------------------------------
+
     private fun toggleZoom() {
         isZoomFit = !isZoomFit
         applyZoomMode()
         val iconRes = if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
-        binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)?.setImageResource(iconRes)
+        binding.playerView.findViewById<android.widget.ImageButton>(R.id.btn_zoom)
+            ?.setImageResource(iconRes)
     }
 
     private fun applyZoomMode() {
@@ -429,20 +340,120 @@ class PlayerFragment : Fragment() {
             AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
-    private fun showError(msg: String) {
-        binding.progressBuffering.visibility = View.GONE
-        binding.errorOverlay.visibility = View.VISIBLE
-        binding.tvError.text = msg
+    // -------------------------------------------------------------------------
+    // Player listener
+    // -------------------------------------------------------------------------
+
+    private val playerListener = object : Player.Listener {
+
+        override fun onTracksChanged(tracks: Tracks) {
+            if (_binding == null) return // FIX: Safety Check
+
+            val exoPlayer = player ?: return
+            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            if (videoGroups.isEmpty()) return
+
+            var bestGroup   = videoGroups[0]
+            var bestTrack   = 0
+            var bestBitrate = -1
+
+            videoGroups.forEach { group ->
+                for (ti in 0 until group.length) {
+                    val bps = group.getTrackFormat(ti).bitrate
+                    if (bps > bestBitrate) {
+                        bestBitrate = bps
+                        bestGroup   = group
+                        bestTrack   = ti
+                    }
+                }
+            }
+
+            if (!bestGroup.isTrackSelected(bestTrack)) {
+                val override = TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setOverrideForType(override)
+                    .build()
+                Log.d(TAG, "Auto-selected highest video: ${bestBitrate / 1000}kbps")
+            }
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            if (_binding == null) return // FIX: This is what caused the 95% crash!
+            
+            when (state) {
+                Player.STATE_BUFFERING -> {
+                    binding.progressBuffering.visibility = View.VISIBLE
+                    viewModel.updatePlaybackState(isPlaying = false, isBuffering = true)
+                }
+                Player.STATE_READY -> {
+                    binding.progressBuffering.visibility = View.GONE
+                    viewModel.updatePlaybackState(isPlaying = player?.isPlaying ?: false, isBuffering = false)
+                }
+                else -> binding.progressBuffering.visibility = View.GONE
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (_binding == null) return // FIX: Safety Check
+            viewModel.updatePlaybackState(isPlaying = isPlaying)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            if (_binding == null) return // FIX: Safety Check
+            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            showError("${error.message}\n\nError Code: ${error.errorCode}")
+        }
     }
 
-    override fun onResume() { super.onResume(); attachPlayerView() }
-    override fun onPause() { super.onPause(); binding.playerView.player = null }
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private fun showError(message: String) {
+        if (_binding == null) return
+        binding.progressBuffering.visibility = View.GONE
+        binding.errorOverlay.visibility = View.VISIBLE
+        binding.tvError.text = message
+    }
+
+    private fun hexToBase64Url(hex: String): String =
+        Base64.encodeToString(hexToBytes(hex), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
+    private fun hexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "Hex string must have even length" }
+        return ByteArray(hex.length / 2) { i ->
+            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
+        }
+    }
+
+    private fun releasePlayer() {
+        player?.removeListener(playerListener)
+        _binding?.playerView?.player = null // FIX: Safely detach video surface before closing
+        player?.release()
+        player = null
+    }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
+
+    override fun onPause() {
+        super.onPause()
+        player?.pause()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
-        overlayHandler.removeCallbacksAndMessages(null)
-        playerManager.removeListener(playerListener)
-        binding.playerView.player = null
-        safeExitPlayerMode()
-        _binding = null
+        releasePlayer()
+        
+        // FIX: Ensure UI cleanly resets to normal mode when backing out to channels list
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity?.window?.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        }
+        
+        _binding = null // This line is why the app crashed previously if listeners were delayed
     }
 }
