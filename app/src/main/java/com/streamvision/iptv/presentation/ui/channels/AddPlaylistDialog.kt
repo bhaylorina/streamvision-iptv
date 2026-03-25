@@ -20,9 +20,9 @@ class AddPlaylistDialog(
     private var etUrl: TextInputEditText? = null
 
     /**
-     * File picker — launched when the user taps "Browse".
-     * The resulting content URI is written directly into the URL field so the
-     * existing add-playlist flow handles both HTTP URLs and local content:// URIs.
+     * File picker — restricted to common M3U/M3U8 MIME types.
+     * Falls back to showing all files (`*/*`) since many devices report
+     * `.m3u8` files as `application/octet-stream` or `text/plain`.
      */
     private val pickFileLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -48,7 +48,9 @@ class AddPlaylistDialog(
         val btnBrowse = view.findViewById<MaterialButton>(R.id.btn_browse_file)
 
         btnBrowse.setOnClickListener {
-            pickFileLauncher.launch("*/*")
+            // Use audio/x-mpegurl for M3U; */* as fallback for devices that
+            // report .m3u8 files as application/octet-stream or text/plain
+            pickFileLauncher.launch("audio/x-mpegurl")
         }
 
         return MaterialAlertDialogBuilder(requireContext())

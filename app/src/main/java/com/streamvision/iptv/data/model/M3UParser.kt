@@ -27,7 +27,6 @@ object M3UParser {
         var currentUa: String? = null
         var currentCookie: String? = null
         var currentReferer: String? = null
-        @Suppress("UNUSED_VARIABLE") var currentDrmScheme: String? = null
 
         for (line in lines) {
             val trim = line.trim()
@@ -90,7 +89,7 @@ object M3UParser {
                     val prop = trim.removePrefix("#KODIPROP:").trim()
                     when {
                         prop.startsWith("inputstream.adaptive.license_type=") ->
-                            currentDrmScheme = prop.substringAfter("=").trim()
+                            { /* DRM scheme noted but not yet surfaced to the Channel model */ }
 
                         prop.startsWith("inputstream.adaptive.license_key=") -> {
                             val keyValue = prop.removePrefix("inputstream.adaptive.license_key=").trim()
@@ -159,7 +158,6 @@ object M3UParser {
                     currentTitle = null; currentLogo = null; currentGroup = null
                     currentLicenseKey = null; currentKeyId = null; currentKey = null
                     currentUa = null; currentCookie = null; currentReferer = null
-                    currentDrmScheme = null
                 }
             }
         }

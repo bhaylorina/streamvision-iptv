@@ -97,9 +97,19 @@ class PlaylistRepositoryImpl @Inject constructor(
         }
 
     private fun readLocalUri(uri: Uri): String {
-        val stream = context.contentResolver.openInputStream(uri)
-            ?: throw IllegalStateException("Cannot open URI: $uri")
-        return stream.use { BufferedReader(InputStreamReader(it)).readText() }
+        return try {
+            val stream = context.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Cannot open URI: $uri — file may have been deleted")
+            stream.use { BufferedReader(InputStreamReader(it)).readText() }
+        } catch (e: SecurityException) {
+            throw SecurityException(
+                "Permission denied reading file. Please re-add the playlist to grant access.", e
+            )
+        } catch (e: java.io.FileNotFoundException) {
+            throw java.io.FileNotFoundException(
+                "File not found: the selected file may have been moved or deleted."
+            )
+        }
     }
 
     private fun fetchUrlContent(urlString: String): String {
