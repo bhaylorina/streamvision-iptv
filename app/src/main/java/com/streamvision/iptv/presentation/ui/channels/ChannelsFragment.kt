@@ -41,18 +41,21 @@ class ChannelsFragment : Fragment() {
     private lateinit var playlistAdapter: PlaylistAdapter
     private var searchJob: Job? = null
     
-    // Safety flag so we don't kill playback if user pressed "Fullscreen"
     private var isNavigatingToFullscreen = false
 
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
-            // STOP playback when exiting back to Playlists Screen
+            // Stop playback when pressing Back to return to Playlist list
             viewModel.playerManager.stop()
             viewModel.clearCurrentPlaylist()
         }
     }
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
         _binding = FragmentChannelsBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -72,7 +75,6 @@ class ChannelsFragment : Fragment() {
     }
 
     private fun setupInlinePlayer() {
-        // Setup Fullscreen Transition Button
         binding.inlinePlayerView.findViewById<ImageButton>(R.id.btn_fullscreen)?.apply {
             setImageResource(R.drawable.ic_fullscreen)
             setOnClickListener {
@@ -87,14 +89,14 @@ class ChannelsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        isNavigatingToFullscreen = false // Reset state
+        isNavigatingToFullscreen = false 
         binding.inlinePlayerView.player = viewModel.playerManager.player
         viewModel.refreshPlaylists()
     }
 
     override fun onPause() {
         super.onPause()
-        // If user changed tabs to Favorites/Settings, STOP playing!
+        // Stop playback if we are NOT going to Fullscreen (e.g., navigating to Favorites/Settings)
         if (!isNavigatingToFullscreen) {
             viewModel.playerManager.stop()
         }
@@ -104,7 +106,9 @@ class ChannelsFragment : Fragment() {
     private fun setupPlaylistRecyclerView() {
         playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist -> viewModel.selectPlaylist(playlist.id) },
-            onDeleteClick = { _ -> Snackbar.make(binding.root, "Delete playlists from Settings", Snackbar.LENGTH_SHORT).show() }
+            onDeleteClick = { _ ->
+                Snackbar.make(binding.root, "Delete playlists from Settings", Snackbar.LENGTH_SHORT).show()
+            }
         )
         binding.rvPlaylists.apply {
             adapter = playlistAdapter
@@ -116,7 +120,7 @@ class ChannelsFragment : Fragment() {
         channelAdapter = ChannelAdapter(
             onChannelClick = { channel -> 
                 viewModel.onChannelSelected(channel.id)
-                viewModel.playerManager.play(channel) // Play in TOP inline player
+                viewModel.playerManager.play(channel)
             },
             onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) }
         )
@@ -125,10 +129,52 @@ class ChannelsFragment : Fragment() {
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
-    
-    // ...[Keep your setupSearch(), setupGroupChipAll(), setupAddPlaylistButton(), etc.] ...
+
+    private fun setupSearch() {
+        binding.etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                searchJob?.cancel()
+                searchJob = viewLifecycleOwner.lifecycleScope.launch {
+                    delay(300)
+                    viewModel.setSearchQuery(s?.toString() ?: "")
+                }
+            }
+        })
+    }
+
+    private fun setupGroupChipAll() {
+        binding.chipAll.setOnClickListener { viewModel.setSelectedGroup(null) }
+    }
+
+    private fun setupAddPlaylistButton() {
+        binding.btnAddPlaylist.setOnClickListener { showAddPlaylistDialog() }
+        binding.btnAddFirstPlaylist.setOnClickListener { showAddPlaylistDialog() }
+    }
+
+    private fun setupSwipeRefresh() {
+        binding.swipeRefresh.setOnRefreshListener {
+            if (viewModel.uiState.value.currentPlaylist != null) {
+                viewModel.refreshCurrentPlaylist()
+            } else {
+                binding.swipeRefresh.isRefreshing = false
+            }
+        }
+    }
+
+    private fun observeUiState() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state -> renderState(state) }
+            }
+        }
+    }
 
     private fun renderState(state: ChannelsUiState) {
+        binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
+        binding.swipeRefresh.isRefreshing = state.isLoading
+
         val isShowingChannels = state.currentPlaylist != null
         backCallback.isEnabled = isShowingChannels
 
@@ -136,9 +182,46 @@ class ChannelsFragment : Fragment() {
         binding.inlinePlayerContainer.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.searchLayout.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
         binding.rvChannels.visibility = if (isShowingChannels) View.VISIBLE else View.GONE
-        binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
         
-        // ... [Rest of your UI bindings] ...
+        binding.chipGroup.visibility = if (isShowingChannels && state.groups.isNotEmpty()) View.VISIBLE else View.GONE
+        binding.emptyState.visibility = if (isShowingChannels && !state.isLoading && state.filteredChannels.isEmpty()) View.VISIBLE else View.GONE
+        
+        binding.rvPlaylists.visibility = if (!isShowingChannels) View.VISIBLE else View.GONE
+        binding.tvNoPlaylists.visibility = if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
+
+        if (!isShowingChannels) {
+            playlistAdapter.submitList(state.playlists)
+        } else {
+            channelAdapter.submitList(state.filteredChannels)
+            updateGroupChips(state.groups, state.selectedGroup)
+        }
+
+        state.error?.let { error ->
+            Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
+            viewModel.clearError()
+        }
+    }
+
+    private fun updateGroupChips(groups: List<String>, selectedGroup: String?) {
+        val chipGroup = binding.chipGroup
+        while (chipGroup.childCount > 1) chipGroup.removeViewAt(1)
+        binding.chipAll.isChecked = selectedGroup == null
+        groups.forEach { group ->
+            val chip = Chip(requireContext()).apply {
+                text = group
+                isCheckable = true
+                isChecked = group == selectedGroup
+                setChipBackgroundColorResource(R.color.surface)
+                setOnClickListener { viewModel.setSelectedGroup(group) }
+            }
+            chipGroup.addView(chip)
+        }
+    }
+
+    private fun showAddPlaylistDialog() {
+        AddPlaylistDialog { name, url ->
+            viewModel.addPlaylist(name, url)
+        }.show(parentFragmentManager, "AddPlaylistDialog")
     }
 
     override fun onDestroyView() {
