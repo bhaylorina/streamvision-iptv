@@ -6,10 +6,12 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
@@ -30,8 +32,32 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // FIX: Draw edge-to-edge so we can manually apply insets to every view.
+        // This is required on Android 15+ and ensures no view overlaps the status bar.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // FIX: Apply system bar insets once to the root — every fragment
+        // will automatically sit below the status bar because navHostFragment
+        // gets a topMargin equal to the status bar height.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            // Push nav host below status bar
+            val navParams = binding.navHostFragment.layoutParams as ViewGroup.MarginLayoutParams
+            navParams.topMargin = systemBars.top
+            binding.navHostFragment.layoutParams = navParams
+
+            // Push bottom nav above gesture bar / nav bar
+            val bottomNavParams = binding.bottomNavigation.layoutParams as ViewGroup.MarginLayoutParams
+            bottomNavParams.bottomMargin = systemBars.bottom
+            binding.bottomNavigation.layoutParams = bottomNavParams
+
+            insets
+        }
 
         setupNavigation()
         requestPermissions()
@@ -47,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         navController.addOnDestinationChangedListener { _, destination, _ ->
             when (destination.id) {
                 R.id.playerFragment -> {
-                    // Full screen player — hide everything
                     binding.bottomNavigation.visibility = View.GONE
                     binding.miniPlayer.root.visibility = View.GONE
                     setNavHostBottomMargin(0)
@@ -55,8 +80,6 @@ class MainActivity : AppCompatActivity() {
                 else -> {
                     binding.bottomNavigation.visibility = View.VISIBLE
                     setNavHostBottomMargin(56)
-                    // ✅ Mini player visibility is managed by ChannelsFragment/FavoritesFragment
-                    // Do NOT force-show it here — let the fragment decide
                 }
             }
         }
@@ -81,22 +104,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // FIX: Keep screen on whenever the mini player is visible
     fun showMiniPlayer(channelName: String) {
         binding.miniPlayer.root.visibility = View.VISIBLE
         binding.miniPlayer.tvMiniTitle.text = channelName
-
-        // FIX: Apply status bar inset as top padding so the mini player
-        // never overlaps the status bar on any device or Android version.
-        ViewCompat.setOnApplyWindowInsetsListener(binding.miniPlayer.root) { view, insets ->
-            val topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-            view.setPadding(0, topInset, 0, 0)
-            insets
-        }
-        ViewCompat.requestApplyInsets(binding.miniPlayer.root)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     fun hideMiniPlayer() {
         binding.miniPlayer.root.visibility = View.GONE
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     fun updateMiniPlayerState(isPlaying: Boolean) {
