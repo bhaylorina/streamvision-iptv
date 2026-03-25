@@ -32,7 +32,7 @@ class AddPlaylistDialog(
                     requireContext().contentResolver.takePersistableUriPermission(
                         selected, Intent.FLAG_GRANT_READ_URI_PERMISSION
                     )
-                } catch (_: SecurityException) { /* permission may not be persistable */ }
+                } catch (e: SecurityException) { /* permission may not be persistable */ }
                 etUrl?.setText(selected.toString())
             }
         }
