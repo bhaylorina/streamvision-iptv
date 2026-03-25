@@ -7,6 +7,8 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +26,7 @@ import com.streamvision.iptv.player.PlayerManager
 import com.streamvision.iptv.presentation.ui.player.PlayerFragment
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlin.math.abs
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -60,6 +63,62 @@ class MainActivity : AppCompatActivity() {
 
         setupNavigation()
         requestPermissions()
+        setupMiniPlayerGestures() // FIX: Set up gesture detection for Mini Player
+    }
+
+    private fun setupMiniPlayerGestures() {
+        val miniPlayerLayout = findViewById<View>(R.id.mini_player_root) ?: return
+        val miniPlayerView = findViewById<View>(R.id.mini_player_view)
+
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            private val SWIPE_THRESHOLD = 100
+            private val SWIPE_VELOCITY_THRESHOLD = 100
+
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                if (e1 == null) return false
+                val diffY = e2.y - e1.y
+                val diffX = e2.x - e1.x
+
+                if (abs(diffX) > abs(diffY)) {
+                    // Left / Right Swipes
+                    if (abs(diffX) > SWIPE_THRESHOLD && abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+                        findViewById<View>(R.id.btn_mini_close)?.performClick()
+                        return true
+                    }
+                } else {
+                    // Up / Down Swipes
+                    if (abs(diffY) > SWIPE_THRESHOLD && abs(velocityY) > SWIPE_VELOCITY_THRESHOLD) {
+                        if (diffY < 0) {
+                            // Swipe Up -> Expand
+                            findViewById<View>(R.id.btn_mini_fullscreen)?.performClick()
+                            return true
+                        } else {
+                            // Swipe Down -> Dismiss
+                            findViewById<View>(R.id.btn_mini_close)?.performClick()
+                            return true
+                        }
+                    }
+                }
+                return false
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                // Tap -> Expand Mini Player
+                findViewById<View>(R.id.btn_mini_fullscreen)?.performClick()
+                return true
+            }
+        })
+
+        // Apply swipe detector to Mini Player layout entirely
+        val touchListener = View.OnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            true
+        }
+
+        miniPlayerLayout.setOnTouchListener(touchListener)
+        miniPlayerView?.setOnTouchListener(touchListener)
     }
 
     private fun setupNavigation() {
