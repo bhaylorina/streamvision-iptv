@@ -87,6 +87,13 @@ class PlayerFragment : Fragment() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
+    // FIX: Added missing function to resolve MainActivity Build Error
+    fun handlePipModeChange(isInPiP: Boolean) {
+        if (_binding == null) return
+        binding.playerView.useController = !isInPiP
+        binding.tvChannelName.visibility = if (isInPiP) View.GONE else View.VISIBLE
+    }
+
     // -------------------------------------------------------------------------
     // Click listeners
     // -------------------------------------------------------------------------
@@ -103,8 +110,7 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    // FIX: Disabling this prevents the app from crashing if you double-tap back quickly
-                    isEnabled = false 
+                    isEnabled = false // Prevents double-click crash
                     releasePlayer()
                     findNavController().popBackStack()
                 }
@@ -112,9 +118,8 @@ class PlayerFragment : Fragment() {
         )
 
         binding.playerView.post {
-            // FIX: Ensure binding is still alive when this post executes
-            if (_binding == null) return@post 
-            
+            if (_binding == null) return@post // Safety check
+
             binding.playerView.findViewById<View>(R.id.btn_audio_track)
                 ?.setOnClickListener { showAudioTrackDialog() }
 
@@ -135,7 +140,7 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     if (_binding == null) return@collect // Safety check
-                    
+
                     state.currentChannel?.let { channel ->
                         if (currentChannel?.id != channel.id) {
                             currentChannel = channel
@@ -265,7 +270,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // 2. Video Quality dialog
+    // 2. Video Quality dialog  (default = highest bitrate via onTracksChanged)
     // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
@@ -335,9 +340,9 @@ class PlayerFragment : Fragment() {
 
     private fun applyZoomMode() {
         binding.playerView.resizeMode = if (isZoomFit)
-            AspectRatioFrameLayout.RESIZE_MODE_FIT
+            AspectRatioFrameLayout.RESIZE_MODE_FIT   // nothing cropped (default)
         else
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM  // fills screen, edges may crop
     }
 
     // -------------------------------------------------------------------------
@@ -346,8 +351,9 @@ class PlayerFragment : Fragment() {
 
     private val playerListener = object : Player.Listener {
 
+        /** Auto-select the highest-bitrate video track when tracks become available. */
         override fun onTracksChanged(tracks: Tracks) {
-            if (_binding == null) return // FIX: Safety Check
+            if (_binding == null) return // Safety check
 
             val exoPlayer = player ?: return
             val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
@@ -379,8 +385,8 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (_binding == null) return // FIX: This is what caused the 95% crash!
-            
+            if (_binding == null) return // Safety check
+
             when (state) {
                 Player.STATE_BUFFERING -> {
                     binding.progressBuffering.visibility = View.VISIBLE
@@ -395,13 +401,13 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (_binding == null) return // FIX: Safety Check
+            if (_binding == null) return // Safety check
             viewModel.updatePlaybackState(isPlaying = isPlaying)
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            if (_binding == null) return // FIX: Safety Check
-            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            if (_binding == null) return // Safety check
+            Log.e(TAG, "Player error[${error.errorCode}]: ${error.message}", error)
             showError("${error.message}\n\nError Code: ${error.errorCode}")
         }
     }
@@ -428,8 +434,10 @@ class PlayerFragment : Fragment() {
     }
 
     private fun releasePlayer() {
+        // FIX: CRITICAL CRASH FIX! Detach player from view BEFORE releasing
+        _binding?.playerView?.player = null 
+
         player?.removeListener(playerListener)
-        _binding?.playerView?.player = null // FIX: Safely detach video surface before closing
         player?.release()
         player = null
     }
@@ -446,14 +454,8 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         releasePlayer()
-        
-        // FIX: Ensure UI cleanly resets to normal mode when backing out to channels list
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.window?.let { window ->
-            WindowCompat.setDecorFitsSystemWindows(window, true)
-            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
-        }
-        
-        _binding = null // This line is why the app crashed previously if listeners were delayed
+        activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
+        _binding = null
     }
 }
