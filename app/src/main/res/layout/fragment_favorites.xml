@@ -1,14 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    FIX: Added paddingTop="16dp" to the title so there is a visual gap
-    below the status bar. The real status bar inset is applied by MainActivity
-    via navHostFragment topMargin so content never hides behind the status bar.
--->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/primary_background">
+
+    <!-- 16:9 Permanent Player Box at Top -->
+    <FrameLayout
+        android:id="@+id/inline_player_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@android:color/black"
+        app:layout_constraintDimensionRatio="16:9"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/inline_player_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:controller_layout_id="@layout/exo_player_control_view"
+            app:resize_mode="fit"
+            app:show_buffering="always"
+            app:use_controller="true" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/tv_title"
@@ -21,7 +37,7 @@
         android:textSize="24sp"
         android:textStyle="bold"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@id/inline_player_container" />
 
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/search_layout"
@@ -35,9 +51,7 @@
         app:hintTextColor="@color/text_secondary"
         app:startIconDrawable="@drawable/ic_search"
         app:startIconTint="@color/text_secondary"
-        app:layout_constraintTop_toBottomOf="@id/tv_title"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintTop_toBottomOf="@id/tv_title">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/et_search"
@@ -47,7 +61,6 @@
             android:inputType="text"
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary" />
-
     </com.google.android.material.textfield.TextInputLayout>
 
     <androidx.recyclerview.widget.RecyclerView
@@ -60,44 +73,5 @@
         android:paddingBottom="16dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toBottomOf="@id/search_layout" />
-
-    <!-- Empty state -->
-    <LinearLayout
-        android:id="@+id/empty_state"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ImageView
-            android:layout_width="120dp"
-            android:layout_height="120dp"
-            android:src="@drawable/ic_favorite_outline"
-            app:tint="@color/text_tertiary" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/no_favorites"
-            android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
-
-    </LinearLayout>
-
-    <ProgressBar
-        android:id="@+id/progress_bar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
