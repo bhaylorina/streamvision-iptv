@@ -20,23 +20,21 @@ class AddPlaylistDialog(
 
     /**
      * File picker — restricted to common M3U/M3U8 MIME types.
-     * Falls back to showing all files (`*/*`) since many devices report
-     * `.m3u8` files as `application/octet-stream` or `text/plain`.
+     * Falls back to showing all files since many devices report
+     * .m3u8 files as application/octet-stream or text/plain.
      *
-     * Uses `by lazy` so that `registerForActivityResult` is called after
-     * the Fragment is attached (required by the Activity Result API).
+     * Initialized directly (without 'by lazy') to ensure it is registered 
+     * before the Fragment reaches the STARTED state.
      */
-    private val pickFileLauncher by lazy {
-        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            uri?.also { selected ->
-                // Persist read permission so we can re-read the file after a restart
-                try {
-                    requireContext().contentResolver.takePersistableUriPermission(
-                        selected, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
-                } catch (e: SecurityException) { /* permission may not be persistable */ }
-                etUrl?.setText(selected.toString())
-            }
+    private val pickFileLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.also { selected ->
+            // Persist read permission so we can re-read the file after a restart
+            try {
+                requireContext().contentResolver.takePersistableUriPermission(
+                    selected, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: SecurityException) { /* permission may not be persistable */ }
+            etUrl?.setText(selected.toString())
         }
     }
 
@@ -51,7 +49,7 @@ class AddPlaylistDialog(
         val btnBrowse = view.findViewById<MaterialButton>(R.id.btn_browse_file)
 
         btnBrowse.setOnClickListener {
-            // Use audio/x-mpegurl for M3U; */* as fallback for devices that
+            // Use audio/x-mpegurl for M3U; any type as fallback for devices that
             // report .m3u8 files as application/octet-stream or text/plain
             pickFileLauncher.launch("audio/x-mpegurl")
         }
