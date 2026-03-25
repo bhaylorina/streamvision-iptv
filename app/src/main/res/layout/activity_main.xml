@@ -6,11 +6,10 @@
     android:background="@color/primary_background">
 
     <!--
-        FIX: Removed android:layout_marginBottom="56dp"
-        The bottom margin was always reserving 56dp space even when
-        bottomNavigation was GONE — causing the grey bar in the player.
-        We now set the margin dynamically in MainActivity based on
-        whether we are in the player or not.
+        FIX: topMargin and bottomMargin are applied dynamically in MainActivity
+        using WindowInsetsCompat so every fragment automatically respects the
+        status bar height (no overlap). Do NOT add fitsSystemWindows here
+        because CoordinatorLayout + edge-to-edge requires manual inset dispatch.
     -->
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/nav_host_fragment"
@@ -21,8 +20,9 @@
         app:navGraph="@navigation/nav_graph" />
 
     <!--
-        FIX: Added android:fitsSystemWindows="true" so the mini player
-        is aware of the status bar inset and does not overlap it.
+        Mini player sits just above the bottom navigation.
+        Height: 200dp video + 56dp controls = 256dp total.
+        layout_marginBottom="56dp" keeps it above the bottom nav bar.
     -->
     <include
         android:id="@+id/mini_player"
@@ -31,7 +31,6 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:layout_marginBottom="56dp"
-        android:fitsSystemWindows="true"
         android:visibility="gone" />
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
