@@ -1,11 +1,11 @@
 package com.streamvision.iptv.player
 
 import android.content.Context
-import android.util.Log
+import android.content.Intent
+import android.os.Build
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.DrmConfiguration
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -20,86 +20,76 @@ import javax.inject.Singleton
 class PlayerManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    var player: ExoPlayer? = null
-        private set
+    /**
+     * A single, persistent HTTP factory whose default request properties are updated
+     * per channel so we don't need to recreate the ExoPlayer for each channel change.
+     */
+    private val httpFactory: DefaultHttpDataSource.Factory = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(15_000)
+        .setReadTimeoutMs(15_000)
+
+    /**
+     * Single persistent ExoPlayer instance – created lazily on the calling (main) thread.
+     */
+    val player: ExoPlayer by lazy {
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context)
+                    .setDataSourceFactory(httpFactory)
+                    .setDrmSessionManagerProvider(DefaultDrmSessionManagerProvider())
+            )
+            .build()
+    }
 
     var currentChannel: Channel? = null
         private set
 
-    private val listeners = mutableListOf<Player.Listener>()
-
-    fun addListener(listener: Player.Listener) {
-        listeners.add(listener)
-        player?.addListener(listener)
-    }
-
-    fun removeListener(listener: Player.Listener) {
-        listeners.remove(listener)
-        player?.removeListener(listener)
-    }
+    fun addListener(listener: Player.Listener)    { player.addListener(listener) }
+    fun removeListener(listener: Player.Listener) { player.removeListener(listener) }
 
     /**
-     * Play a channel.
-     * FIX: Re-added full DRM (Widevine/ClearKey) support.
-     * The channel's drmLicenseUrl and drmKeyId/drmKeyValue fields are used
-     * to configure a DrmConfiguration on the MediaItem so protected streams
-     * play correctly — this was missing and caused DRM channels to fail.
+     * Start playing [channel].  If the same channel is already playing, this is a no-op.
+     * Updates HTTP headers on the shared factory before loading the new MediaItem so that
+     * cookies / user-agent / referer are sent correctly without recreating the player.
      */
     fun play(channel: Channel) {
-        if (currentChannel?.id == channel.id && player?.isPlaying == true) return
+        if (currentChannel?.id == channel.id && player.isPlaying) return
 
         currentChannel = channel
 
-        player?.let { old ->
-            listeners.forEach { old.removeListener(it) }
-            old.release()
+        // Update per-channel request headers on the shared factory
+        httpFactory.setDefaultRequestProperties(buildHeaders(channel))
+
+        player.setMediaItem(buildMediaItem(channel))
+        player.prepare()
+        player.playWhenReady = true
+
+        // Start foreground service so playback survives app background
+        val intent = Intent(context, PlaybackService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
         }
-
-        val httpFactory = buildHttpFactory(channel)
-
-        // FIX: Build MediaItem with optional DRM configuration
-        val mediaItem = buildMediaItem(channel)
-
-        player = ExoPlayer.Builder(context)
-            .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context)
-                    .setDataSourceFactory(httpFactory)
-                    // FIX: Wire the DRM session manager so Widevine/ClearKey works
-                    .setDrmSessionManagerProvider(DefaultDrmSessionManagerProvider())
-            )
-            .build()
-            .also { exo ->
-                listeners.forEach { exo.addListener(it) }
-                exo.setMediaItem(mediaItem)
-                exo.prepare()
-                exo.playWhenReady = true
-            }
     }
 
-    fun pause()  { player?.pause() }
-    fun resume() { player?.play()  }
+    fun pause()  { player.pause() }
+    fun resume() { player.play() }
 
     fun stop() {
-        player?.let { old ->
-            listeners.forEach { old.removeListener(it) }
-            old.release()
-        }
-        player = null
+        player.stop()
+        player.clearMediaItems()
         currentChannel = null
+        context.stopService(Intent(context, PlaybackService::class.java))
     }
 
-    val isPlaying: Boolean get() = player?.isPlaying == true
+    val isPlaying: Boolean get() = player.isPlaying
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Builds a MediaItem.
-     * FIX: If the channel has a DRM license URL, attaches a DrmConfiguration
-     * so Widevine-protected streams (common in IPTV) can be decrypted.
-     * Supports both Widevine (most Android devices) and ClearKey.
-     */
     private fun buildMediaItem(channel: Channel): MediaItem {
         val builder = MediaItem.Builder().setUri(channel.url)
 
@@ -108,8 +98,7 @@ class PlayerManager @Inject constructor(
             val drmBuilder = DrmConfiguration.Builder(C.WIDEVINE_UUID)
                 .setLicenseUri(licenseUrl)
 
-            // If the channel carries custom DRM request headers, add them
-            val drmHeaders = buildDrmHeaders(channel)
+            val drmHeaders = buildHeaders(channel)
             if (drmHeaders.isNotEmpty()) {
                 drmBuilder.setLicenseRequestHeaders(drmHeaders)
             }
@@ -120,22 +109,11 @@ class PlayerManager @Inject constructor(
         return builder.build()
     }
 
-    private fun buildDrmHeaders(channel: Channel): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
-        if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
-        if (!channel.referer.isNullOrBlank())   headers["Referer"]   = channel.referer
-        return headers
-    }
-
-    private fun buildHttpFactory(channel: Channel): DefaultHttpDataSource.Factory {
+    private fun buildHeaders(channel: Channel): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         if (!channel.userAgent.isNullOrBlank()) headers["User-Agent"] = channel.userAgent
         if (!channel.referer.isNullOrBlank())   headers["Referer"]   = channel.referer
         if (!channel.cookie.isNullOrBlank())    headers["Cookie"]    = channel.cookie
-        return DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-            .setDefaultRequestProperties(headers)
+        return headers
     }
 }

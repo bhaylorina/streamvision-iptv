@@ -1,10 +1,13 @@
 package com.streamvision.iptv.presentation.ui.favorites
 
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -14,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.streamvision.iptv.databinding.FragmentFavoritesBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
+import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import com.streamvision.iptv.presentation.viewmodel.FavoritesViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
@@ -25,6 +29,8 @@ class FavoritesFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: FavoritesViewModel by viewModels()
+    // Shared ChannelsViewModel gives access to the activity-scoped PlayerManager
+    private val channelsViewModel: ChannelsViewModel by activityViewModels()
     private lateinit var channelAdapter: ChannelAdapter
 
     override fun onCreateView(
@@ -39,18 +45,29 @@ class FavoritesFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         setupRecyclerView()
+        setupSearch()
         observeState()
     }
 
     private fun setupRecyclerView() {
         channelAdapter = ChannelAdapter(
-            onChannelClick = { channel -> navigateToPlayer(channel) },
+            onChannelClick  = { channel -> navigateToPlayer(channel) },
             onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) }
         )
         binding.rvFavorites.apply {
             layoutManager = LinearLayoutManager(requireContext())
-            adapter = channelAdapter
+            adapter       = channelAdapter
         }
+    }
+
+    private fun setupSearch() {
+        binding.etSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                viewModel.setSearchQuery(s?.toString() ?: "")
+            }
+        })
     }
 
     private fun observeState() {
@@ -58,13 +75,12 @@ class FavoritesFragment : Fragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
-                    
-                    channelAdapter.submitList(state.favorites)
 
-                    // Update empty state
-                    val showEmpty = state.favorites.isEmpty() && !state.isLoading
-                    binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
-                    binding.rvFavorites.visibility = if (showEmpty) View.GONE else View.VISIBLE
+                    channelAdapter.submitList(state.filteredFavorites)
+
+                    val showEmpty = state.filteredFavorites.isEmpty() && !state.isLoading
+                    binding.emptyState.visibility  = if (showEmpty) View.VISIBLE else View.GONE
+                    binding.rvFavorites.visibility = if (showEmpty) View.GONE   else View.VISIBLE
                 }
             }
         }

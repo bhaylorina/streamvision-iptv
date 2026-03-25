@@ -13,6 +13,8 @@ import javax.inject.Inject
 
 data class FavoritesUiState(
     val favorites: List<Channel> = emptyList(),
+    val filteredFavorites: List<Channel> = emptyList(),
+    val searchQuery: String = "",
     val isLoading: Boolean = false
 )
 
@@ -34,20 +36,35 @@ class FavoritesViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             getFavoriteChannelsUseCase().collect { favorites ->
-                _uiState.update { it.copy(favorites = favorites, isLoading = false) }
+                _uiState.update { state ->
+                    state.copy(
+                        favorites         = favorites,
+                        filteredFavorites = filterFavorites(favorites, state.searchQuery),
+                        isLoading         = false
+                    )
+                }
             }
         }
     }
 
-    fun toggleFavorite(channelId: Long) {
-        viewModelScope.launch {
-            toggleFavoriteUseCase(channelId)
+    fun setSearchQuery(query: String) {
+        _uiState.update { state ->
+            state.copy(
+                searchQuery       = query,
+                filteredFavorites = filterFavorites(state.favorites, query)
+            )
         }
     }
 
+    private fun filterFavorites(favorites: List<Channel>, query: String): List<Channel> =
+        if (query.isBlank()) favorites
+        else favorites.filter { it.name.contains(query, ignoreCase = true) }
+
+    fun toggleFavorite(channelId: Long) {
+        viewModelScope.launch { toggleFavoriteUseCase(channelId) }
+    }
+
     fun updateLastWatched(channelId: Long) {
-        viewModelScope.launch {
-            updateLastWatchedUseCase(channelId)
-        }
+        viewModelScope.launch { updateLastWatchedUseCase(channelId) }
     }
 }

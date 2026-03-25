@@ -14,6 +14,7 @@ import javax.inject.Inject
 data class ChannelsUiState(
     val channels: List<Channel> = emptyList(),
     val filteredChannels: List<Channel> = emptyList(),
+    val recentChannels: List<Channel> = emptyList(),
     val groups: List<String> = emptyList(),
     val selectedGroup: String? = null,
     val searchQuery: String = "",
@@ -34,7 +35,8 @@ class ChannelsViewModel @Inject constructor(
     private val getPlaylistsUseCase: GetPlaylistsUseCase,
     private val addPlaylistUseCase: AddPlaylistUseCase,
     private val getPlaylistByIdUseCase: GetPlaylistByIdUseCase,
-    // ✅ Shared player manager injected here
+    private val refreshPlaylistUseCase: RefreshPlaylistUseCase,
+    private val getRecentChannelsUseCase: GetRecentChannelsUseCase,
     val playerManager: PlayerManager
 ) : ViewModel() {
 
@@ -43,6 +45,7 @@ class ChannelsViewModel @Inject constructor(
 
     init {
         loadPlaylists()
+        loadRecentChannels()
     }
 
     private fun loadPlaylists() {
@@ -51,13 +54,22 @@ class ChannelsViewModel @Inject constructor(
                 .onEach { playlists ->
                     _uiState.update {
                         it.copy(
-                            playlists = playlists,
+                            playlists       = playlists,
                             playlistsLoaded = true,
-                            hasNoPlaylists = playlists.isEmpty()
+                            hasNoPlaylists  = playlists.isEmpty()
                         )
                     }
                 }
                 .launchIn(viewModelScope)
+        }
+    }
+
+    private fun loadRecentChannels() {
+        viewModelScope.launch {
+            getRecentChannelsUseCase()
+                .collect { recent ->
+                    _uiState.update { it.copy(recentChannels = recent) }
+                }
         }
     }
 
@@ -66,24 +78,14 @@ class ChannelsViewModel @Inject constructor(
     }
 
     fun selectPlaylist(playlistId: Long) {
-        _uiState.update {
-            it.copy(
-                channels = emptyList(),
-                filteredChannels = emptyList()
-            )
-        }
+        _uiState.update { it.copy(channels = emptyList(), filteredChannels = emptyList()) }
         loadChannels(playlistId)
     }
 
     fun loadChannels(playlistId: Long) {
         viewModelScope.launch {
             _uiState.update {
-                it.copy(
-                    isLoading = true,
-                    error = null,
-                    searchQuery = "",
-                    selectedGroup = null
-                )
+                it.copy(isLoading = true, error = null, searchQuery = "", selectedGroup = null)
             }
 
             val playlist = getPlaylistByIdUseCase(playlistId)
@@ -91,11 +93,11 @@ class ChannelsViewModel @Inject constructor(
             getChannelsUseCase(playlistId).collect { channels ->
                 _uiState.update { state ->
                     state.copy(
-                        currentPlaylist = playlist,
-                        channels = channels,
+                        currentPlaylist  = playlist,
+                        channels         = channels,
                         filteredChannels = filterChannels(channels, null, ""),
-                        groups = emptyList(),
-                        isLoading = false
+                        groups           = emptyList(),
+                        isLoading        = false
                     )
                 }
             }
@@ -108,10 +110,25 @@ class ChannelsViewModel @Inject constructor(
         }
     }
 
+    /** Re-downloads the playlist from the network, refreshing all channels. */
+    fun refreshCurrentPlaylist() {
+        val playlistId = _uiState.value.currentPlaylist?.id ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                refreshPlaylistUseCase(playlistId)
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Refresh failed: ${e.message}") }
+            } finally {
+                _uiState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
     fun setSelectedGroup(group: String?) {
         _uiState.update { state ->
             state.copy(
-                selectedGroup = group,
+                selectedGroup    = group,
                 filteredChannels = filterChannels(state.channels, group, state.searchQuery)
             )
         }
@@ -120,7 +137,7 @@ class ChannelsViewModel @Inject constructor(
     fun setSearchQuery(query: String) {
         _uiState.update { state ->
             state.copy(
-                searchQuery = query,
+                searchQuery      = query,
                 filteredChannels = filterChannels(state.channels, state.selectedGroup, query)
             )
         }
@@ -130,12 +147,10 @@ class ChannelsViewModel @Inject constructor(
         channels: List<Channel>,
         group: String?,
         query: String
-    ): List<Channel> {
-        return channels.filter { channel ->
-            val matchesGroup = group == null || channel.group == group
-            val matchesQuery = query.isEmpty() || channel.name.contains(query, ignoreCase = true)
-            matchesGroup && matchesQuery
-        }
+    ): List<Channel> = channels.filter { channel ->
+        val matchesGroup = group == null || channel.group == group
+        val matchesQuery = query.isEmpty() || channel.name.contains(query, ignoreCase = true)
+        matchesGroup && matchesQuery
     }
 
     fun toggleFavorite(channelId: Long) {
@@ -152,23 +167,23 @@ class ChannelsViewModel @Inject constructor(
 
     fun clearCurrentPlaylist() {
         _uiState.update {
-            it.copy(
-                currentPlaylist = null,
-                searchQuery = "",
-                selectedGroup = null
-            )
+            it.copy(currentPlaylist = null, searchQuery = "", selectedGroup = null)
         }
     }
 
     fun addPlaylist(name: String, url: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+            _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val playlistId = addPlaylistUseCase(name, url)
                 loadChannels(playlistId)
-                _uiState.update { it.copy(isLoading = false) }
             } catch (e: Exception) {
-                _uiState.update { it.copy(error = e.message, isLoading = false) }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "Failed to load playlist: ${e.message ?: "Unknown error"}"
+                    )
+                }
             }
         }
     }

@@ -12,7 +12,6 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.media3.common.Player
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -22,7 +21,7 @@ import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
 import com.streamvision.iptv.presentation.adapter.PlaylistAdapter
-import com.streamvision.iptv.presentation.ui.MainActivity
+import com.streamvision.iptv.presentation.adapter.RecentChannelAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -40,6 +39,7 @@ class ChannelsFragment : Fragment() {
 
     private lateinit var channelAdapter: ChannelAdapter
     private lateinit var playlistAdapter: PlaylistAdapter
+    private lateinit var recentAdapter: RecentChannelAdapter
 
     private var searchJob: Job? = null
 
@@ -47,12 +47,6 @@ class ChannelsFragment : Fragment() {
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             viewModel.clearCurrentPlaylist()
-        }
-    }
-
-    private val playerListener = object : Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            (activity as? MainActivity)?.updateMiniPlayerState(isPlaying)
         }
     }
 
@@ -72,67 +66,72 @@ class ChannelsFragment : Fragment() {
 
         setupPlaylistRecyclerView()
         setupChannelRecyclerView()
+        setupRecentRecyclerView()
         setupSearch()
         setupGroupChipAll()
         setupAddPlaylistButton()
         setupSwipeRefresh()
         observeUiState()
-
-        viewModel.playerManager.addListener(playerListener)
-
-        // Restore mini player in MainActivity if something is already playing
-        viewModel.playerManager.currentChannel?.let { channel ->
-            (activity as? MainActivity)?.showMiniPlayer(channel.name)
-        }
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.refreshPlaylists()
-
-        // Re-attach player when returning from fullscreen
-        viewModel.playerManager.currentChannel?.let { channel ->
-            (activity as? MainActivity)?.showMiniPlayer(channel.name)
-        }
     }
 
-    override fun onPause() {
-        super.onPause()
-        // Detach mini player view only — stream keeps running
-        // The mini player view in activity_main.xml will be detached by MainActivity
-    }
-
-    private fun playChannel(channel: Channel) {
-        viewModel.playerManager.play(channel)
-        (activity as? MainActivity)?.showMiniPlayer(channel.name)
-    }
+    // -------------------------------------------------------------------------
+    // RecyclerView setup
+    // -------------------------------------------------------------------------
 
     private fun setupPlaylistRecyclerView() {
         playlistAdapter = PlaylistAdapter(
             onPlaylistClick = { playlist -> viewModel.selectPlaylist(playlist.id) },
             onDeleteClick = { _ ->
-                Snackbar.make(binding.root, "Delete playlist from Settings screen", Snackbar.LENGTH_SHORT).show()
+                Snackbar.make(binding.root, "Delete playlists from Settings", Snackbar.LENGTH_SHORT).show()
             }
         )
         binding.rvPlaylists.apply {
-            adapter = playlistAdapter
+            adapter       = playlistAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
 
     private fun setupChannelRecyclerView() {
         channelAdapter = ChannelAdapter(
-            onChannelClick = { channel ->
-                viewModel.onChannelSelected(channel.id)
-                playChannel(channel)
-            },
+            onChannelClick  = { channel -> onChannelTapped(channel) },
             onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) }
         )
         binding.rvChannels.apply {
-            adapter = channelAdapter
+            adapter       = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
         }
     }
+
+    private fun setupRecentRecyclerView() {
+        recentAdapter = RecentChannelAdapter { channel -> onChannelTapped(channel) }
+        binding.rvRecent.apply {
+            adapter       = recentAdapter
+            layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Channel tap → navigate to full-screen PlayerFragment
+    // -------------------------------------------------------------------------
+
+    private fun onChannelTapped(channel: Channel) {
+        viewModel.onChannelSelected(channel.id)
+        navigateToPlayer(channel.id)
+    }
+
+    private fun navigateToPlayer(channelId: Long) {
+        val bundle = Bundle().apply { putLong("channelId", channelId) }
+        findNavController().navigate(R.id.action_channels_to_player, bundle)
+    }
+
+    // -------------------------------------------------------------------------
+    // Other UI setup
+    // -------------------------------------------------------------------------
 
     private fun setupSearch() {
         binding.etSearch.addTextChangedListener(object : TextWatcher {
@@ -159,11 +158,18 @@ class ChannelsFragment : Fragment() {
 
     private fun setupSwipeRefresh() {
         binding.swipeRefresh.setOnRefreshListener {
-            val playlistId = viewModel.uiState.value.currentPlaylist?.id
-            if (playlistId != null) viewModel.loadChannels(playlistId)
-            else binding.swipeRefresh.isRefreshing = false
+            if (viewModel.uiState.value.currentPlaylist != null) {
+                // Re-download from network
+                viewModel.refreshCurrentPlaylist()
+            } else {
+                binding.swipeRefresh.isRefreshing = false
+            }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // State observation
+    // -------------------------------------------------------------------------
 
     private fun observeUiState() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -174,7 +180,7 @@ class ChannelsFragment : Fragment() {
     }
 
     private fun renderState(state: ChannelsUiState) {
-        binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
+        binding.progressBar.visibility  = if (state.isLoading) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = state.isLoading
 
         val isShowingChannels = state.currentPlaylist != null
@@ -193,15 +199,20 @@ class ChannelsFragment : Fragment() {
         binding.tvNoPlaylists.visibility  =
             if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
+        // Recently watched — only shown on playlist selection screen with existing history
+        binding.recentlyWatchedSection.visibility =
+            if (!isShowingChannels && state.recentChannels.isNotEmpty()) View.VISIBLE else View.GONE
+
         if (!isShowingChannels) {
             playlistAdapter.submitList(state.playlists)
+            recentAdapter.submitList(state.recentChannels)
         } else {
             channelAdapter.submitList(state.filteredChannels)
             updateGroupChips(state.groups, state.selectedGroup)
         }
 
         state.error?.let { error ->
-            Snackbar.make(binding.root, error.toString(), Snackbar.LENGTH_LONG).show()
+            Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
             viewModel.clearError()
         }
     }
@@ -212,19 +223,14 @@ class ChannelsFragment : Fragment() {
         binding.chipAll.isChecked = selectedGroup == null
         groups.forEach { group ->
             val chip = Chip(requireContext()).apply {
-                text = group
-                isCheckable = true
-                isChecked = group == selectedGroup
+                text         = group
+                isCheckable  = true
+                isChecked    = group == selectedGroup
                 setChipBackgroundColorResource(R.color.surface)
                 setOnClickListener { viewModel.setSelectedGroup(group) }
             }
             chipGroup.addView(chip)
         }
-    }
-
-    private fun navigateToPlayer(channelId: Long) {
-        val bundle = Bundle().apply { putLong("channelId", channelId) }
-        findNavController().navigate(R.id.action_channels_to_player, bundle)
     }
 
     private fun showAddPlaylistDialog() {
@@ -235,7 +241,6 @@ class ChannelsFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        viewModel.playerManager.removeListener(playerListener)
         _binding = null
         searchJob?.cancel()
     }
