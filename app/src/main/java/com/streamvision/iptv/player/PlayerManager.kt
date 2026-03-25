@@ -9,9 +9,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.DrmConfiguration
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.streamvision.iptv.domain.model.Channel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -22,24 +22,24 @@ import javax.inject.Singleton
 class PlayerManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    /**
-     * A single, persistent HTTP factory whose default request properties are updated
-     * per channel so we don't need to recreate the ExoPlayer for each channel change.
-     */
-    private val httpFactory: DefaultHttpDataSource.Factory = DefaultHttpDataSource.Factory()
+    // Persistent HTTP factory for network requests
+    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setAllowCrossProtocolRedirects(true)
         .setConnectTimeoutMs(15_000)
         .setReadTimeoutMs(15_000)
 
     /**
-     * Single persistent ExoPlayer instance – created lazily on the calling (main) thread.
+     * Wrap the HTTP factory in a DefaultDataSource.Factory.
+     * This allows ExoPlayer to handle "data:" URIs (needed for ClearKey) 
+     * and local file assets in addition to HTTP.
      */
+    private val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+
     val player: ExoPlayer by lazy {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(context)
-                    .setDataSourceFactory(httpFactory)
-                    .setDrmSessionManagerProvider(DefaultDrmSessionManagerProvider())
+                    .setDataSourceFactory(dataSourceFactory)
             )
             .build()
     }
@@ -50,24 +50,18 @@ class PlayerManager @Inject constructor(
     fun addListener(listener: Player.Listener)    { player.addListener(listener) }
     fun removeListener(listener: Player.Listener) { player.removeListener(listener) }
 
-    /**
-     * Start playing [channel].  If the same channel is already playing, this is a no-op.
-     * Updates HTTP headers on the shared factory before loading the new MediaItem so that
-     * cookies / user-agent / referer are sent correctly without recreating the player.
-     */
     fun play(channel: Channel) {
         if (currentChannel?.id == channel.id && player.isPlaying) return
 
         currentChannel = channel
 
-        // Update per-channel request headers on the shared factory
-        httpFactory.setDefaultRequestProperties(buildHeaders(channel))
+        // Update headers on the underlying HTTP factory
+        httpDataSourceFactory.setDefaultRequestProperties(buildHeaders(channel))
 
         player.setMediaItem(buildMediaItem(channel))
         player.prepare()
         player.playWhenReady = true
 
-        // Start foreground service so playback survives app background
         val intent = Intent(context, PlaybackService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
@@ -88,48 +82,40 @@ class PlayerManager @Inject constructor(
 
     val isPlaying: Boolean get() = player.isPlaying
 
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
-
     private fun buildMediaItem(channel: Channel): MediaItem {
         val builder = MediaItem.Builder().setUri(channel.url)
 
-        val licenseUrl = channel.drmLicenseUrl
-        val drmKey = channel.drmKey
-
-        if (!licenseUrl.isNullOrBlank()) {
-            // Standard Widevine DRM
+        if (!channel.drmLicenseUrl.isNullOrBlank()) {
+            // Widevine
             val drmBuilder = DrmConfiguration.Builder(C.WIDEVINE_UUID)
-                .setLicenseUri(licenseUrl)
-
-            val drmHeaders = buildHeaders(channel)
-            if (drmHeaders.isNotEmpty()) {
-                drmBuilder.setLicenseRequestHeaders(drmHeaders)
-            }
-
+                .setLicenseUri(channel.drmLicenseUrl)
+            
+            val headers = buildHeaders(channel)
+            if (headers.isNotEmpty()) drmBuilder.setLicenseRequestHeaders(headers)
+            
             builder.setDrmConfiguration(drmBuilder.build())
-        } else if (!drmKey.isNullOrBlank()) {
-            // ClearKey DRM
-            val parts = drmKey.split(":")
+        } else if (!channel.drmKey.isNullOrBlank()) {
+            // ClearKey
+            val parts = channel.drmKey.split(":")
             if (parts.size == 2) {
                 try {
-                    val kidHex = parts[0]
-                    val keyHex = parts[1]
+                    val kid = hexToBase64Url(parts[0])
+                    val key = hexToBase64Url(parts[1])
 
-                    val kidBase64 = hexToBase64Url(kidHex)
-                    val keyBase64 = hexToBase64Url(keyHex)
-
-                    // Format as a JSON Web Key (JWK) Set for ExoPlayer
-                    val jwkSet = """{"keys":[{"kty":"oct","k":"$keyBase64","kid":"$kidBase64"}],"type":"temporary"}"""
-                    val dataUri = "data:application/json;base64," + Base64.encodeToString(jwkSet.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-
-                    val drmBuilder = DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                        .setLicenseUri(dataUri)
+                    // Construct the JWK Set JSON
+                    val jwk = """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""
+                    val base64Jwk = Base64.encodeToString(jwk.toByteArray(), Base64.NO_PADDING or Base64.NO_WRAP)
                     
-                    builder.setDrmConfiguration(drmBuilder.build())
+                    // The "data:" URI tells ExoPlayer to read the license from this string
+                    val dataUri = "data:application/json;base64,$base64Jwk"
+
+                    builder.setDrmConfiguration(
+                        DrmConfiguration.Builder(C.CLEARKEY_UUID)
+                            .setLicenseUri(dataUri)
+                            .build()
+                    )
                 } catch (e: Exception) {
-                    Log.e("PlayerManager", "Failed to parse ClearKey", e)
+                    Log.e("PlayerManager", "ClearKey parsing failed", e)
                 }
             }
         }
@@ -146,10 +132,7 @@ class PlayerManager @Inject constructor(
     }
 
     private fun hexToBase64Url(hex: String): String {
-        require(hex.length % 2 == 0) { "Hex string must have an even length" }
-        val bytes = ByteArray(hex.length / 2) { i ->
-            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
-        }
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 }
