@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -23,8 +22,11 @@ class AddPlaylistDialog(
      * File picker — restricted to common M3U/M3U8 MIME types.
      * Falls back to showing all files (`*/*`) since many devices report
      * `.m3u8` files as `application/octet-stream` or `text/plain`.
+     *
+     * Uses `by lazy` so that `registerForActivityResult` is called after
+     * the Fragment is attached (required by the Activity Result API).
      */
-    private val pickFileLauncher =
+    private val pickFileLauncher by lazy {
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             uri?.also { selected ->
                 // Persist read permission so we can re-read the file after a restart
@@ -36,6 +38,7 @@ class AddPlaylistDialog(
                 etUrl?.setText(selected.toString())
             }
         }
+    }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val view = LayoutInflater.from(requireContext())
