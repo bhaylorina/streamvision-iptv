@@ -591,7 +591,14 @@ class PlayerFragment : Fragment() {
         releasePlayer()
         
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
+        activity?.window?.let { window ->
+            // Restore edge-to-edge tracking for MainActivity
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            // SHOW the Status Bar explicitly when returning from full screen
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        }
         _binding = null
     }
 }
