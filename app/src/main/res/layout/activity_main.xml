@@ -20,6 +20,10 @@
         app:defaultNavHost="true"
         app:navGraph="@navigation/nav_graph" />
 
+    <!--
+        FIX: Added android:fitsSystemWindows="true" so the mini player
+        is aware of the status bar inset and does not overlap it.
+    -->
     <include
         android:id="@+id/mini_player"
         layout="@layout/layout_mini_player"
@@ -27,6 +31,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:layout_marginBottom="56dp"
+        android:fitsSystemWindows="true"
         android:visibility="gone" />
 
     <com.google.android.material.bottomnavigation.BottomNavigationView
