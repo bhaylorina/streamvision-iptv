@@ -1,11 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    This layout is inflated by PlayerView as its controller overlay.
-    ExoPlayer automatically wires: exo_progress, exo_play_pause, exo_rew,
-    exo_ffwd, exo_position, exo_duration — using the fixed @id/ (no +).
-    Our 3 extra buttons use @+id/ and are wired manually in PlayerFragment
-    via playerView.findViewById().
--->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,7 +7,6 @@
     android:orientation="vertical"
     android:padding="8dp">
 
-    <!-- ExoPlayer seekbar — wired automatically by PlayerView -->
     <androidx.media3.ui.DefaultTimeBar
         android:id="@id/exo_progress"
         android:layout_width="match_parent"
@@ -27,7 +19,6 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <!-- Current position — wired by PlayerView -->
         <TextView
             android:id="@id/exo_position"
             android:layout_width="wrap_content"
@@ -42,7 +33,6 @@
             android:textColor="@color/white"
             android:textSize="14sp" />
 
-        <!-- Duration — wired by PlayerView -->
         <TextView
             android:id="@id/exo_duration"
             android:layout_width="wrap_content"
@@ -50,67 +40,65 @@
             android:textColor="@color/white"
             android:textSize="14sp" />
 
-        <!-- Spacer -->
         <View
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- ── OUR CUSTOM BUTTONS (use @+id, wired manually) ── -->
-
-        <!-- Audio Track -->
+        <!-- CUSTOM BUTTONS -->
         <ImageButton
             android:id="@+id/btn_audio_track"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:layout_marginEnd="4dp"
+            android:layout_marginEnd="2dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Audio Track"
             android:padding="6dp"
             android:src="@drawable/ic_audio_track"
             android:tint="@color/white" />
 
-        <!-- Video Quality -->
         <ImageButton
             android:id="@+id/btn_video_quality"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:layout_marginEnd="4dp"
+            android:layout_marginEnd="2dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Video Quality"
             android:padding="6dp"
             android:src="@drawable/ic_video_quality"
             android:tint="@color/white" />
 
-        <!-- Zoom / Resize -->
         <ImageButton
             android:id="@+id/btn_zoom"
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:layout_marginEnd="4dp"
+            android:layout_marginEnd="2dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Zoom"
             android:padding="6dp"
             android:src="@drawable/ic_zoom_fit"
             android:tint="@color/white" />
+            
+        <ImageButton
+            android:id="@+id/btn_fullscreen"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="6dp"
+            android:src="@drawable/ic_fullscreen"
+            android:tint="@color/white" />
 
-        <!-- ── EXOPLAYER NATIVE BUTTONS (use @id, no +) ── -->
-
-        <!-- Rewind — wired by PlayerView -->
+        <!-- EXOPLAYER NATIVE BUTTONS -->
         <ImageButton
             android:id="@id/exo_rew"
             style="@style/ExoMediaButton.Rewind"
             android:layout_width="48dp"
             android:layout_height="48dp" />
 
-        <!-- Play/Pause — wired by PlayerView -->
         <ImageButton
             android:id="@id/exo_play_pause"
             style="@style/ExoMediaButton"
             android:layout_width="48dp"
             android:layout_height="48dp" />
 
-        <!-- Fast-forward — wired by PlayerView -->
         <ImageButton
             android:id="@id/exo_ffwd"
             style="@style/ExoMediaButton.FastForward"
