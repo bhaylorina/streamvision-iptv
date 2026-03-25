@@ -73,7 +73,6 @@ class MainActivity : AppCompatActivity() {
             when (destination.id) {
                 R.id.playerFragment -> {
                     isPlayerVisible = true
-                    // CRITICAL: Prevent mini-player from stealing the video surface
                     binding.miniPlayer.miniPlayerView.player = null
                     binding.miniPlayer.root.visibility = View.GONE
                     binding.bottomNavigation.visibility = View.GONE
@@ -82,7 +81,7 @@ class MainActivity : AppCompatActivity() {
                 else -> {
                     isPlayerVisible = false
                     binding.bottomNavigation.visibility = View.VISIBLE
-                    setNavHostBottomMargin(56)
+                    setNavHostBottomMargin(80) // Fix: Match M3 standard bottom nav height
                 }
             }
         }
