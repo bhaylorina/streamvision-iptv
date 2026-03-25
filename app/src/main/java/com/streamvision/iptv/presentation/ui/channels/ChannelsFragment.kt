@@ -21,7 +21,6 @@ import com.streamvision.iptv.databinding.FragmentChannelsBinding
 import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.adapter.ChannelAdapter
 import com.streamvision.iptv.presentation.adapter.PlaylistAdapter
-import com.streamvision.iptv.presentation.adapter.RecentChannelAdapter
 import com.streamvision.iptv.presentation.viewmodel.ChannelsUiState
 import com.streamvision.iptv.presentation.viewmodel.ChannelsViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -39,7 +38,6 @@ class ChannelsFragment : Fragment() {
 
     private lateinit var channelAdapter: ChannelAdapter
     private lateinit var playlistAdapter: PlaylistAdapter
-    private lateinit var recentAdapter: RecentChannelAdapter
 
     private var searchJob: Job? = null
 
@@ -66,7 +64,6 @@ class ChannelsFragment : Fragment() {
 
         setupPlaylistRecyclerView()
         setupChannelRecyclerView()
-        setupRecentRecyclerView()
         setupSearch()
         setupGroupChipAll()
         setupAddPlaylistButton()
@@ -104,14 +101,6 @@ class ChannelsFragment : Fragment() {
         binding.rvChannels.apply {
             adapter       = channelAdapter
             layoutManager = LinearLayoutManager(requireContext())
-        }
-    }
-
-    private fun setupRecentRecyclerView() {
-        recentAdapter = RecentChannelAdapter { channel -> onChannelTapped(channel) }
-        binding.rvRecent.apply {
-            adapter       = recentAdapter
-            layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         }
     }
 
@@ -199,13 +188,8 @@ class ChannelsFragment : Fragment() {
         binding.tvNoPlaylists.visibility  =
             if (!isShowingChannels && state.hasNoPlaylists) View.VISIBLE else View.GONE
 
-        // Recently watched — only shown on playlist selection screen with existing history
-        binding.recentlyWatchedSection.visibility =
-            if (!isShowingChannels && state.recentChannels.isNotEmpty()) View.VISIBLE else View.GONE
-
         if (!isShowingChannels) {
             playlistAdapter.submitList(state.playlists)
-            recentAdapter.submitList(state.recentChannels)
         } else {
             channelAdapter.submitList(state.filteredChannels)
             updateGroupChips(state.groups, state.selectedGroup)
