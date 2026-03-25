@@ -86,21 +86,35 @@ class PlayerFragment : Fragment() {
         private const val OVERLAY_HIDE_MS = 1500L
     }
 
+    // Exact high-bitrate force logic from your reference
     private val playerListener = object : Player.Listener {
         override fun onTracksChanged(tracks: Tracks) {
-            val exo = playerManager.player
-            val vGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-            if (vGroups.isEmpty()) return
-            var bestG = vGroups[0]; var bestT = 0; var bestBps = -1
-            vGroups.forEach { g ->
-                for (ti in 0 until g.length) {
-                    val bps = g.getTrackFormat(ti).bitrate
-                    if (bps > bestBps) { bestBps = bps; bestG = g; bestT = ti }
+            val exoPlayer = playerManager.player ?: return
+            val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+            if (videoGroups.isEmpty()) return
+
+            var bestGroup   = videoGroups[0]
+            var bestTrack   = 0
+            var bestBitrate = -1
+
+            videoGroups.forEach { group ->
+                for (ti in 0 until group.length) {
+                    val bps = group.getTrackFormat(ti).bitrate
+                    if (bps > bestBitrate) {
+                        bestBitrate = bps
+                        bestGroup   = group
+                        bestTrack   = ti
+                    }
                 }
             }
-            if (!bestG.isTrackSelected(bestT)) {
-                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(bestG.mediaTrackGroup, bestT)).build()
+
+            if (!bestGroup.isTrackSelected(bestTrack)) {
+                val override = TrackSelectionOverride(bestGroup.mediaTrackGroup, bestTrack)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setOverrideForType(override)
+                    .build()
+                Log.d(TAG, "Auto-selected highest video: ${bestBitrate / 1000}kbps")
             }
         }
 
@@ -114,7 +128,8 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            showError("${error.message}\nCode: ${error.errorCode}")
+            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
+            showError("${error.message}\n\nError Code: ${error.errorCode}")
         }
     }
 
@@ -308,36 +323,110 @@ class PlayerFragment : Fragment() {
         }
     }
 
+    // Exact Audio Track Dialog from your reference
     private fun showAudioTrackDialog() {
-        val exo = playerManager.player
-        val groups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (groups.isEmpty()) return
-        val labels = groups.mapIndexed { i, g -> "${g.getTrackFormat(0).language?.uppercase() ?: "Track ${i+1}"}" }
-        AlertDialog.Builder(requireContext()).setTitle("Audio Track")
-            .setSingleChoiceItems(labels.toTypedArray(), groups.indexOfFirst { it.isSelected }) { d, w ->
-                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                    .setOverrideForType(TrackSelectionOverride(groups[w].mediaTrackGroup, 0)).build()
-                d.dismiss()
-            }.show()
+        val exoPlayer = playerManager.player ?: return
+        val audioGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+
+        if (audioGroups.isEmpty()) {
+            AlertDialog.Builder(requireContext())
+                .setTitle("Audio Track")
+                .setMessage("No audio tracks available.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val labels = audioGroups.mapIndexed { index, group ->
+            val fmt  = group.getTrackFormat(0)
+            val lang = fmt.language?.uppercase() ?: "Track ${index + 1}"
+            val ch   = if (fmt.channelCount > 0) " ${fmt.channelCount}ch" else ""
+            val kbps = if (fmt.bitrate > 0) " ${fmt.bitrate / 1000}kbps" else ""
+            "$lang$ch$kbps"
+        }
+
+        val currentIndex = audioGroups.indexOfFirst { it.isSelected }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Audio Track")
+            .setSingleChoiceItems(labels.toTypedArray(), currentIndex) { dlg, which ->
+                val override = TrackSelectionOverride(audioGroups[which].mediaTrackGroup, 0)
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setOverrideForType(override)
+                    .build()
+                dlg.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
+    // Exact Video Quality Dialog from your reference
     private fun showVideoQualityDialog() {
-        val exo = playerManager.player
-        val vGroups = exo.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
-        if (vGroups.isEmpty()) return
-        val entries = mutableListOf<String>().apply { add("Auto") }
-        // Simplified for brevity
-        AlertDialog.Builder(requireContext()).setTitle("Quality").setItems(entries.toTypedArray()) { d, w -> d.dismiss() }.show()
+        val exoPlayer = playerManager.player ?: return
+        val videoGroups = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+
+        if (videoGroups.isEmpty()) {
+            AlertDialog.Builder(requireContext())
+                .setTitle("Video Quality")
+                .setMessage("No video tracks available.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        data class Entry(val groupIdx: Int, val trackIdx: Int, val label: String, val bitrate: Int)
+
+        val entries = mutableListOf<Entry>()
+        videoGroups.forEachIndexed { gi, group ->
+            for (ti in 0 until group.length) {
+                val fmt  = group.getTrackFormat(ti)
+                val res  = if (fmt.height > 0) "${fmt.height}p" else "Track ${gi + 1}"
+                val fps  = if (fmt.frameRate > 0) " ${fmt.frameRate.toInt()}fps" else ""
+                val kbps = if (fmt.bitrate > 0) " (${fmt.bitrate / 1000}kbps)" else ""
+                entries.add(Entry(gi, ti, "$res$fps$kbps", fmt.bitrate))
+            }
+        }
+        entries.sortByDescending { it.bitrate }
+
+        val labels = mutableListOf("Auto") + entries.map { it.label }
+        val currentEntry = entries.indexOfFirst { e -> videoGroups[e.groupIdx].isTrackSelected(e.trackIdx) }
+        val checkedIndex = if (currentEntry >= 0) currentEntry + 1 else 0
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Video Quality")
+            .setSingleChoiceItems(labels.toTypedArray(), checkedIndex) { dlg, which ->
+                if (which == 0) {
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                        .build()
+                } else {
+                    val e = entries[which - 1]
+                    val override = TrackSelectionOverride(videoGroups[e.groupIdx].mediaTrackGroup, e.trackIdx)
+                    exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .setOverrideForType(override)
+                        .build()
+                }
+                dlg.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun toggleZoom() {
         isZoomFit = !isZoomFit
         applyZoomMode()
-        binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)?.setImageResource(if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill)
+        val iconRes = if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
+        binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)?.setImageResource(iconRes)
     }
 
     private fun applyZoomMode() {
-        binding.playerView.resizeMode = if (isZoomFit) AspectRatioFrameLayout.RESIZE_MODE_FIT else AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        binding.playerView.resizeMode = if (isZoomFit)
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        else
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
     private fun showError(msg: String) {
