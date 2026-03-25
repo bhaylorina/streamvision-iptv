@@ -1,12 +1,19 @@
 package com.streamvision.iptv.presentation.ui.player
 
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.WindowCompat
@@ -39,6 +46,7 @@ import com.streamvision.iptv.domain.model.Channel
 import com.streamvision.iptv.presentation.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @UnstableApi
 @AndroidEntryPoint
@@ -56,6 +64,26 @@ class PlayerFragment : Fragment() {
     // Zoom state: true = FIT (default), false = FILL
     private var isZoomFit = true
 
+    // -------------------------------------------------------------------------
+    // Gesture Variables
+    // -------------------------------------------------------------------------
+    private lateinit var audioManager: AudioManager
+    private var maxVolume = 0
+    private var initVolume = 0
+    private var initBrightness = 0f
+
+    private var gestureStartX = 0f
+    private var gestureStartY = 0f
+    private var gestureType = GestureType.NONE
+    private val GESTURE_THRESHOLD = 20f
+    private val BAR_TRACK_DP = 120
+
+    private val overlayHandler = Handler(Looper.getMainLooper())
+    private val hideBrightness = Runnable { _binding?.brightnessOverlay?.visibility = View.GONE }
+    private val hideVolume = Runnable { _binding?.volumeOverlay?.visibility = View.GONE }
+
+    private enum class GestureType { NONE, BRIGHTNESS, VOLUME, HORIZONTAL }
+
     companion object {
         private const val TAG = "PlayerFragment"
     }
@@ -71,7 +99,13 @@ class PlayerFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        // Initialize Audio Manager for Volume control
+        audioManager = requireContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        
         hideSystemUI()
+        setupGestures()
         setupClickListeners()
         observeState()
         viewModel.loadChannel(args.channelId)
@@ -87,11 +121,135 @@ class PlayerFragment : Fragment() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    // FIX: Added missing function to resolve MainActivity Build Error
     fun handlePipModeChange(isInPiP: Boolean) {
         if (_binding == null) return
         binding.playerView.useController = !isInPiP
         binding.tvChannelName.visibility = if (isInPiP) View.GONE else View.VISIBLE
+    }
+
+    // -------------------------------------------------------------------------
+    // Gestures (Brightness & Volume with Edge Safe Margins)
+    // -------------------------------------------------------------------------
+
+    private fun setupGestures() {
+        binding.playerView.setOnTouchListener { v, event ->
+            if (_binding == null) return@setOnTouchListener false
+            
+            val screenWidth = v.width.toFloat()
+            // 50dp safe zone to prevent conflicting with Android Back Swipe
+            val edgeMarginPx = 50 * resources.displayMetrics.density 
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Ignore gesture if user touches extreme edges (allow system back swipe)
+                    if (event.x < edgeMarginPx || event.x > screenWidth - edgeMarginPx) {
+                        return@setOnTouchListener false
+                    }
+
+                    gestureStartX = event.x
+                    gestureStartY = event.y
+                    gestureType = GestureType.NONE
+                    initVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    initBrightness = getCurrentBrightness()
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.x - gestureStartX
+                    val dy = event.y - gestureStartY
+
+                    if (gestureType == GestureType.NONE) {
+                        // Wait until threshold is crossed to determine swipe intent
+                        if (abs(dy) < GESTURE_THRESHOLD && abs(dx) < GESTURE_THRESHOLD) {
+                            return@setOnTouchListener false
+                        }
+                        
+                        gestureType = if (abs(dy) > abs(dx)) {
+                            // Vertical Swipe
+                            if (gestureStartX < screenWidth / 2) GestureType.BRIGHTNESS else GestureType.VOLUME
+                        } else {
+                            // Horizontal Swipe
+                            GestureType.HORIZONTAL
+                        }
+                    }
+
+                    when (gestureType) {
+                        GestureType.BRIGHTNESS -> {
+                            handleBrightness(dy, v.height.toFloat())
+                            true
+                        }
+                        GestureType.VOLUME -> {
+                            handleVolume(dy, v.height.toFloat())
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    gestureType = GestureType.NONE
+                    false
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun handleBrightness(dy: Float, viewHeight: Float) {
+        if (_binding == null) return
+        val newBright = (initBrightness - (dy / viewHeight)).coerceIn(0.01f, 1f)
+        setBrightness(newBright)
+        val pct = (newBright * 100).toInt()
+        
+        setBarHeight(binding.brightnessBar, pct)
+        binding.tvBrightnessPct.text = "$pct%"
+        
+        binding.brightnessOverlay.visibility = View.VISIBLE
+        overlayHandler.removeCallbacks(hideBrightness)
+        overlayHandler.postDelayed(hideBrightness, 1500L)
+    }
+
+    private fun setBrightness(value: Float) {
+        val window = activity?.window ?: return
+        val lp = window.attributes
+        lp.screenBrightness = value
+        window.attributes = lp
+    }
+
+    private fun getCurrentBrightness(): Float {
+        val lp = activity?.window?.attributes ?: return 0.5f
+        return if (lp.screenBrightness < 0) {
+            try {
+                Settings.System.getInt(requireContext().contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+            } catch (e: Exception) { 0.5f }
+        } else lp.screenBrightness
+    }
+
+    private fun handleVolume(dy: Float, viewHeight: Float) {
+        if (_binding == null) return
+        val newVol = (initVolume - (dy / viewHeight) * maxVolume).toInt().coerceIn(0, maxVolume)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+        
+        val pct = if (maxVolume > 0) (newVol * 100) / maxVolume else 0
+        setBarHeight(binding.volumeBar, pct)
+        binding.tvVolumePct.text = "$pct%"
+        
+        binding.ivVolumeIcon.setImageResource(
+            when {
+                newVol == 0 -> R.drawable.ic_volume_mute
+                newVol < maxVolume / 2 -> R.drawable.ic_volume_down
+                else -> R.drawable.ic_volume_up
+            }
+        )
+
+        binding.volumeOverlay.visibility = View.VISIBLE
+        overlayHandler.removeCallbacks(hideVolume)
+        overlayHandler.postDelayed(hideVolume, 1500L)
+    }
+
+    private fun setBarHeight(barView: View, pct: Int) {
+        val density = resources.displayMetrics.density
+        val lp = barView.layoutParams
+        lp.height = ((BAR_TRACK_DP * density).toInt() * pct) / 100
+        barView.layoutParams = lp
     }
 
     // -------------------------------------------------------------------------
@@ -110,7 +268,7 @@ class PlayerFragment : Fragment() {
             viewLifecycleOwner,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    isEnabled = false // Prevents double-click crash
+                    isEnabled = false // Safe back crash prevention
                     releasePlayer()
                     findNavController().popBackStack()
                 }
@@ -118,7 +276,7 @@ class PlayerFragment : Fragment() {
         )
 
         binding.playerView.post {
-            if (_binding == null) return@post // Safety check
+            if (_binding == null) return@post
 
             binding.playerView.findViewById<View>(R.id.btn_audio_track)
                 ?.setOnClickListener { showAudioTrackDialog() }
@@ -139,7 +297,7 @@ class PlayerFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
-                    if (_binding == null) return@collect // Safety check
+                    if (_binding == null) return@collect
 
                     state.currentChannel?.let { channel ->
                         if (currentChannel?.id != channel.id) {
@@ -187,12 +345,8 @@ class PlayerFragment : Fragment() {
             exoPlayer.playWhenReady = true
         }
 
-        applyZoomMode() // restore zoom preference on new player
+        applyZoomMode()
     }
-
-    // -------------------------------------------------------------------------
-    // HTTP headers
-    // -------------------------------------------------------------------------
 
     private fun buildHttpDataSourceFactory(channel: Channel): DefaultHttpDataSource.Factory {
         val headers = mutableMapOf<String, String>()
@@ -205,10 +359,6 @@ class PlayerFragment : Fragment() {
             .setReadTimeoutMs(15_000)
             .setDefaultRequestProperties(headers)
     }
-
-    // -------------------------------------------------------------------------
-    // ClearKey DRM
-    // -------------------------------------------------------------------------
 
     private fun buildClearKeyDrmSessionManager(drmKey: String): DefaultDrmSessionManager? {
         return try {
@@ -229,7 +379,7 @@ class PlayerFragment : Fragment() {
     }
 
     // -------------------------------------------------------------------------
-    // 1. Audio Track dialog
+    // UI Dialogs & Controls
     // -------------------------------------------------------------------------
 
     private fun showAudioTrackDialog() {
@@ -268,10 +418,6 @@ class PlayerFragment : Fragment() {
             .setNegativeButton("Cancel", null)
             .show()
     }
-
-    // -------------------------------------------------------------------------
-    // 2. Video Quality dialog  (default = highest bitrate via onTracksChanged)
-    // -------------------------------------------------------------------------
 
     private fun showVideoQualityDialog() {
         val exoPlayer = player ?: return
@@ -326,23 +472,18 @@ class PlayerFragment : Fragment() {
             .show()
     }
 
-    // -------------------------------------------------------------------------
-    // 3. Zoom / Resize toggle  (FIT ↔ FILL)
-    // -------------------------------------------------------------------------
-
     private fun toggleZoom() {
         isZoomFit = !isZoomFit
         applyZoomMode()
         val iconRes = if (isZoomFit) R.drawable.ic_zoom_fit else R.drawable.ic_zoom_fill
-        binding.playerView.findViewById<android.widget.ImageButton>(R.id.btn_zoom)
-            ?.setImageResource(iconRes)
+        binding.playerView.findViewById<ImageButton>(R.id.btn_zoom)?.setImageResource(iconRes)
     }
 
     private fun applyZoomMode() {
         binding.playerView.resizeMode = if (isZoomFit)
-            AspectRatioFrameLayout.RESIZE_MODE_FIT   // nothing cropped (default)
+            AspectRatioFrameLayout.RESIZE_MODE_FIT
         else
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM  // fills screen, edges may crop
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
     // -------------------------------------------------------------------------
@@ -351,10 +492,8 @@ class PlayerFragment : Fragment() {
 
     private val playerListener = object : Player.Listener {
 
-        /** Auto-select the highest-bitrate video track when tracks become available. */
         override fun onTracksChanged(tracks: Tracks) {
-            if (_binding == null) return // Safety check
-
+            if (_binding == null) return
             val exoPlayer = player ?: return
             val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
             if (videoGroups.isEmpty()) return
@@ -385,8 +524,7 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (_binding == null) return // Safety check
-
+            if (_binding == null) return
             when (state) {
                 Player.STATE_BUFFERING -> {
                     binding.progressBuffering.visibility = View.VISIBLE
@@ -401,19 +539,19 @@ class PlayerFragment : Fragment() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (_binding == null) return // Safety check
+            if (_binding == null) return
             viewModel.updatePlaybackState(isPlaying = isPlaying)
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            if (_binding == null) return // Safety check
-            Log.e(TAG, "Player error[${error.errorCode}]: ${error.message}", error)
+            if (_binding == null) return
+            Log.e(TAG, "Player error [${error.errorCode}]: ${error.message}", error)
             showError("${error.message}\n\nError Code: ${error.errorCode}")
         }
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // Helpers & Lifecycle
     // -------------------------------------------------------------------------
 
     private fun showError(message: String) {
@@ -434,17 +572,11 @@ class PlayerFragment : Fragment() {
     }
 
     private fun releasePlayer() {
-        // FIX: CRITICAL CRASH FIX! Detach player from view BEFORE releasing
         _binding?.playerView?.player = null 
-
         player?.removeListener(playerListener)
         player?.release()
         player = null
     }
-
-    // -------------------------------------------------------------------------
-    // Lifecycle
-    // -------------------------------------------------------------------------
 
     override fun onPause() {
         super.onPause()
@@ -453,7 +585,11 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        
+        // Remove handler callbacks safely to prevent memory leaks
+        overlayHandler.removeCallbacksAndMessages(null)
         releasePlayer()
+        
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
         _binding = null
