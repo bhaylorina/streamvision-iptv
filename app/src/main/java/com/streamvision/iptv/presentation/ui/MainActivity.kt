@@ -73,7 +73,7 @@ class MainActivity : AppCompatActivity() {
             when (destination.id) {
                 R.id.playerFragment -> {
                     isPlayerVisible = true
-                    // IMPORTANT: Detach player from MiniPlayer UI before entering fullscreen
+                    // CRITICAL: Prevent mini-player from stealing the video surface
                     binding.miniPlayer.miniPlayerView.player = null
                     binding.miniPlayer.root.visibility = View.GONE
                     binding.bottomNavigation.visibility = View.GONE
@@ -105,7 +105,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun showMiniPlayer(channelName: String) {
-        // Prevent mini player if we are already in the player screen
         if (navController.currentDestination?.id == R.id.playerFragment) return
 
         binding.miniPlayer.root.visibility = View.VISIBLE
