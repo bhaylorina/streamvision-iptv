@@ -13,15 +13,6 @@
         app:defaultNavHost="true"
         app:navGraph="@navigation/nav_graph" />
 
-    <include
-        android:id="@+id/mini_player"
-        layout="@layout/layout_mini_player"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:layout_marginBottom="80dp"
-        android:visibility="gone" />
-
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottom_navigation"
         android:layout_width="match_parent"
