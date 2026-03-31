@@ -1,0 +1,9 @@
+{
+  "identifier": "my-local-devbox",
+  "openapi": "http://161.118.167.175:8888/openapi.json",
+  "meta": {
+    "title": "Local Devbox",
+    "description": "Open Interpreter Sandbox for running code locally",
+    "avatar": "💻"
+  }
+}
