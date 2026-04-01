@@ -2,6 +2,7 @@ package com.streamvision.iptv.player
 
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
 import androidx.media3.common.C
@@ -27,6 +28,16 @@ class PlayerManager @Inject constructor(
         .setConnectTimeoutMs(15_000)
         .setReadTimeoutMs(15_000)
 
+    private val wakeLock: PowerManager.WakeLock by lazy {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+            "StreamVision::PlayerWakeLock"
+        ).apply {
+            setReferenceCounted(false)
+        }
+    }
+
     val player: ExoPlayer by lazy {
         ExoPlayer.Builder(context).build()
     }
@@ -44,6 +55,7 @@ class PlayerManager @Inject constructor(
                 player.prepare()
             }
             player.playWhenReady = true
+            acquireWakeLock()
             return 
         }
 
@@ -76,6 +88,8 @@ class PlayerManager @Inject constructor(
         player.setMediaSource(mediaSource)
         player.prepare()
         player.playWhenReady = true
+        
+        acquireWakeLock()
 
         val intent = Intent(context, PlaybackService::class.java)
         try {
@@ -89,17 +103,39 @@ class PlayerManager @Inject constructor(
         }
     }
 
-    fun pause()  { player.pause() }
-    fun resume() { player.play() }
+    fun pause()  { 
+        player.pause() 
+        releaseWakeLock()
+    }
+    
+    fun resume() { 
+        player.play() 
+        acquireWakeLock()
+    }
 
     fun stop() {
         player.stop()
         player.clearMediaItems()
         currentChannel = null
+        releaseWakeLock()
         context.stopService(Intent(context, PlaybackService::class.java))
     }
 
     val isPlaying: Boolean get() = player.isPlaying
+    
+    fun acquireWakeLock() {
+        if (!wakeLock.isHeld) {
+            wakeLock.acquire(10 * 60 * 60 * 1000L) // 10 hours max, will be released when stopped
+            Log.d("PlayerManager", "WakeLock acquired")
+        }
+    }
+    
+    fun releaseWakeLock() {
+        if (wakeLock.isHeld) {
+            wakeLock.release()
+            Log.d("PlayerManager", "WakeLock released")
+        }
+    }
 
     private fun buildHeaders(channel: Channel): Map<String, String> {
         val headers = mutableMapOf<String, String>()
