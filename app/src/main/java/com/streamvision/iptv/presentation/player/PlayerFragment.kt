@@ -98,6 +98,9 @@ class PlayerFragment : Fragment() {
         setupClickListeners()
         observeState()
         
+        // FIX: Keep screen on while in player to prevent screen timeout during video playback
+        binding.root.keepScreenOn = true
+
         // Load UI info
         viewModel.loadChannel(args.channelId)
 
@@ -466,7 +469,7 @@ class PlayerFragment : Fragment() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (_binding == null) return
             viewModel.updatePlaybackState(isPlaying = isPlaying)
-            binding.root.keepScreenOn = isPlaying // FIX: Keeps Screen on programmatically strictly while playing
+            // Screen is kept on via binding.root.keepScreenOn = true in onViewCreated
         }
 
         override fun onPlayerError(error: PlaybackException) {
