@@ -454,10 +454,13 @@ class PlayerFragment : Fragment() {
                 Player.STATE_BUFFERING -> {
                     binding.progressBuffering.visibility = View.VISIBLE
                     viewModel.updatePlaybackState(isPlaying = false, isBuffering = true)
+                    // Keep WakeLock during buffering to prevent screen off
+                    playerManager.acquireWakeLock()
                 }
                 Player.STATE_READY -> {
                     binding.progressBuffering.visibility = View.GONE
                     viewModel.updatePlaybackState(isPlaying = playerManager.isPlaying, isBuffering = false)
+                    // WakeLock is managed by PlayerManager.play() - no need to acquire here
                 }
                 else -> binding.progressBuffering.visibility = View.GONE
             }
@@ -466,7 +469,7 @@ class PlayerFragment : Fragment() {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (_binding == null) return
             viewModel.updatePlaybackState(isPlaying = isPlaying)
-            binding.root.keepScreenOn = isPlaying // FIX: Keeps Screen on programmatically strictly while playing
+            // WakeLock is now managed by PlayerManager - no need to set keepScreenOn
         }
 
         override fun onPlayerError(error: PlaybackException) {
